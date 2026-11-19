@@ -1,0 +1,51 @@
+# Creates a draft GitHub release with a commitizen-generated changelog when
+# a v* tag lands (mirrored from GitLab). Publishing the draft release then
+# triggers release_pypi.yml.
+name: Create GitHub release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+jobs:
+  create_release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the draft release
+    steps:
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # cz changelog needs the full history and all tags.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Generate changelog
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          cz changelog "$VERSION" --file-name changelog_body.md
+          cat changelog_body.md
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: changelog_body.md
+          name: Version ${{ steps.get_version.outputs.VERSION }}
+          draft: true
+          prerelease: false
