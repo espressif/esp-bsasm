@@ -1,0 +1,110 @@
+[build-system]
+# 77.0.3 is the first setuptools release that supports PEP 639 license
+# expressions (`license = "<SPDX>"` and `license-files`).
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esp-bsasm"
+dynamic = ["version"]
+description = "BitScrambler program assembler for ESP-IDF"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Espressif Systems (Shanghai) CO LTD", email = "espressif@espressif.com" },
+]
+keywords = ["esp32", "espressif", "bitscrambler", "assembler"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Natural Language :: English",
+  "Environment :: Console",
+  "Topic :: Software Development :: Embedded Systems",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS :: MacOS X",
+]
+# The generated parser sources import the antlr4 runtime at run time
+# (`from antlr4 import *`), and a runtime of at least the generating
+# tool's version is required - hence the floor, not a lock.
+dependencies = [
+  "antlr4-python3-runtime>=4.13.2",
+  # Per the esp-pylib migration skill (Step 2): floor at the current
+  # release so the shared logger / errors / excepthook APIs are available.
+  "esp-pylib>=1.2.1",
+  "rich-click",
+]
+
+[project.optional-dependencies]
+dev = [
+  # commitizen (Espressif rules) for version bumps and changelogs
+  "czespressif",
+]
+
+[project.scripts]
+bsasm = "bsasm.cli:main"
+
+[project.urls]
+Repository = "https://github.com/espressif/esp-bsasm"
+"Source Code" = "https://gitlab.espressif.cn:27227/espressif/esp-bsasm"
+Documentation = "https://docs.espressif.com/projects/esp-idf/en/latest/esp32c5/api-reference/peripherals/bitscrambler.html"
+
+[tool.setuptools.dynamic]
+version = { attr = "bsasm.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.commitizen]
+name = "czespressif"
+version = "0.1.0"
+tag_format = "v$version"
+bump_message = "change(bump): Update version to $new_version"
+version_files = ["src/bsasm/__init__.py"]
+
+# The ruff and mypy settings live here (repository-templates/python-project).
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+force-exclude = true
+extend-exclude = ["src/bsasm/generated"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint]
+# F: Pyflakes, E/W: pycodestyle, I: isort, UP: pyupgrade
+select = ["F", "E", "W", "I", "UP"]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_no_return = true
+warn_unused_configs = true
+# The generated modules star-import the antlr4 runtime, and the pre-commit
+# environment does not install package dependencies; resolve those names as
+# Any instead of failing.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The generated modules do `from antlr4 import *`; without the runtime
+# installed their names cannot be resolved, so opt the machine output out
+# of error reporting entirely.
+module = ["bsasm.generated.*"]
+ignore_errors = true
