@@ -1,0 +1,66 @@
+stages:
+  - codecheck
+
+# WORKFLOW RULES
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# TEMPLATES
+.base_template:
+  image: python:3.15-slim
+  # Tag of a runner available to this project (gitlab--duo-runner carries
+  # 'shiny'; the fast_run/shiny runners are locked to the esp-idf project).
+  tags:
+    - shiny
+
+# JOBS
+
+# CODE CHECK BY PRE-COMMIT HOOKS
+pre-commit_hooks_MR:
+  stage: codecheck
+  extends: .base_template
+  variables:
+    PRE_COMMIT_HOME: '$CI_PROJECT_DIR/.cache/pre-commit'
+  cache:
+    key: pre-commit-$CI_JOB_NAME
+    paths: [$CI_PROJECT_DIR/.cache/pre-commit]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git
+    - python -m pip install pre-commit
+  script:
+    - pre-commit run --all-files --show-diff-on-failure
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# REGENERATED PARSER STAYS IN SYNC WITH THE GRAMMAR (needs a JDK)
+regenerate_check:
+  stage: codecheck
+  extends: .base_template
+  variables:
+    PIP_CACHE_DIR: '$CI_PROJECT_DIR/.cache/pip'
+  cache:
+    key: pip-$CI_JOB_NAME
+    paths: [$CI_PROJECT_DIR/.cache/pip]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq openjdk-21-jre-headless
+  script:
+    - python -m pip install -e .
+    - python regenerate.py --check
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [BitScrambler.g4]
+    - if: '$CI_COMMIT_BRANCH'
+
+# Publishing to PyPI happens on the GitHub mirror (see
+# .github/workflows/release_pypi.yml): the GitLab EE push mirror (configured
+# in Settings -> Repository -> Mirroring repositories) keeps the mirror in
+# sync with this repository. NOTE: the mirror is set to sync only protected
+# branches - make sure release tags reach GitHub before publishing a release
+# there (use the mirror's "Sync now" button or uncheck the protected-only
+# option).
