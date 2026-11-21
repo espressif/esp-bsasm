@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "esp-bsasm"
 dynamic = ["version"]
-description = "BitScrambler program assembler for ESP-IDF"
+description = "Assembler for the Espressif BitScrambler instruction set"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -38,16 +38,18 @@ classifiers = [
 # tool's version is required - hence the floor, not a lock.
 dependencies = [
   "antlr4-python3-runtime>=4.13.2",
-  # Per the esp-pylib migration skill (Step 2): floor at the current
-  # release so the shared logger / errors / excepthook APIs are available.
+  # The shared logger / errors / excepthook APIs require this floor.
   "esp-pylib>=1.2.1",
   "rich-click",
 ]
 
 [project.optional-dependencies]
 dev = [
-  # commitizen (Espressif rules) for version bumps and changelogs
   "czespressif",
+]
+test = [
+  "pytest>=9",
+  "pytest-cov>=7",
 ]
 
 [project.scripts]
@@ -55,7 +57,7 @@ bsasm = "bsasm.cli:main"
 
 [project.urls]
 Repository = "https://github.com/espressif/esp-bsasm"
-"Source Code" = "https://gitlab.espressif.cn:27227/espressif/esp-bsasm"
+"Source Code" = "https://github.com/espressif/esp-bsasm"
 Documentation = "https://docs.espressif.com/projects/esp-idf/en/latest/esp32c5/api-reference/peripherals/bitscrambler.html"
 
 [tool.setuptools.dynamic]
@@ -63,6 +65,7 @@ version = { attr = "bsasm.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["bsasm*"]
 
 [tool.commitizen]
 name = "czespressif"
@@ -91,12 +94,16 @@ unfixable = []
 
 [tool.ruff.lint.isort]
 force-single-line = true
+known-first-party = ["bsasm"]
+known-local-folder = ["bsbin"]
 
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
 warn_no_return = true
 warn_unused_configs = true
+# tests/bsbin.py is imported as a top-level module (pytest puts tests/ on sys.path).
+mypy_path = "tests"
 # The generated modules star-import the antlr4 runtime, and the pre-commit
 # environment does not install package dependencies; resolve those names as
 # Any instead of failing.
@@ -108,3 +115,41 @@ ignore_missing_imports = true
 # of error reporting entirely.
 module = ["bsasm.generated.*"]
 ignore_errors = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+]
+filterwarnings = [
+  "error",
+  # Third-party code may lag the newest CPython deprecations (the coverage
+  # job runs on the newest Python release); those warnings come from
+  # dependencies this repository does not own.
+  "ignore::DeprecationWarning:esp_pylib",
+  "ignore::DeprecationWarning:rich",
+  "ignore::DeprecationWarning:pygments",
+  "ignore::DeprecationWarning:antlr4",
+]
+xfail_strict = true
+log_cli_level = "INFO"
+
+[tool.coverage.run]
+source = ["bsasm"]
+branch = true
+omit = ["src/bsasm/generated/*"]
+
+[tool.coverage.report]
+omit = ["src/bsasm/generated/*"]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "pragma: no cover",
+]
+show_missing = true
+
+[tool.codespell]
+skip = "src/bsasm/generated,tests/testcases,vendor,*.jar"

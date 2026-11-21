@@ -10,13 +10,13 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^src/bsasm/generated/|^tests/golden/bin/
+        exclude: ^src/bsasm/generated/|^tests/testcases/
       - id: end-of-file-fixer
-        exclude: ^src/bsasm/generated/|^tests/golden/bin/
+        exclude: ^src/bsasm/generated/|^tests/testcases/
       - id: check-executables-have-shebangs
       - id: mixed-line-ending
         args: ["-f=lf"]
-        exclude: ^src/bsasm/generated/|^tests/golden/bin/
+        exclude: ^src/bsasm/generated/|^tests/testcases/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.5
@@ -29,7 +29,8 @@ repos:
     rev: v2.4.1
     hooks:
       - id: mypy
-        additional_dependencies: []
+        additional_dependencies:
+          - pytest
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3
