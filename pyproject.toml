@@ -50,10 +50,19 @@ dev = [
 test = [
   "pytest>=9",
   "pytest-cov>=7",
+  # test_lsp.py exercises the language server, so its runtime deps are
+  # part of the test environment too.
+  "pygls>=2.1",
+  "lsprotocol",
+]
+lsp = [
+  "pygls>=2.1",
+  "lsprotocol",
 ]
 
 [project.scripts]
-bsasm = "bsasm.cli:main"
+bsasm = "bsasm.cli:run"
+bsasm-lsp = "bsasm.lsp:main"
 
 [project.urls]
 Repository = "https://github.com/espressif/esp-bsasm"
@@ -72,7 +81,10 @@ name = "czespressif"
 version = "0.1.0"
 tag_format = "v$version"
 bump_message = "change(bump): Update version to $new_version"
-version_files = ["src/bsasm/__init__.py"]
+version_files = [
+  "src/bsasm/__init__.py",
+  "editors/vscode/package.json:version",
+]
 
 # The ruff and mypy settings live here (repository-templates/python-project).
 [tool.ruff]
@@ -134,6 +146,9 @@ filterwarnings = [
   "ignore::DeprecationWarning:rich",
   "ignore::DeprecationWarning:pygments",
   "ignore::DeprecationWarning:antlr4",
+  # pygls 2.1 calls the deprecated asyncio.iscoroutinefunction while
+  # registering features (Python 3.14+); fixed upstream, ignore until then.
+  "ignore::DeprecationWarning:pygls.feature_manager",
 ]
 xfail_strict = true
 log_cli_level = "INFO"

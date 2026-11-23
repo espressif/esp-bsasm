@@ -111,13 +111,6 @@ class CfgKey(Enum):
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# Statement IR: what the ANTLR visitor (bsasm.builder) records from the
-# parse tree, before any interpretation. Operands stay as raw Atom spellings
-# with their source locations; bsasm.sema turns these into Instructions.
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class Atom:
     """A single-token operand (number, source bit or label reference)."""
@@ -295,13 +288,28 @@ class Opcode:
     cond_source: MuxSource | None = None  # IF/IFN only
 
 
+# Pseudo-slot used when walking all sources of one instruction: output bits
+# 0..31 plus the IF/IFN condition. The condition is packed into the opcode
+# src field, not a CTL_MUX_SEL field, and is stored on Opcode.cond_source
+# rather than Instruction.mux.
+COND_MUX_SLOT = 32
+
+
+def mux_with_condition(mux: dict[int, MuxSource], op: Opcode | None) -> dict[int, MuxSource]:
+    """Output-bit routing plus the IF/IFN condition at :data:`COND_MUX_SLOT`."""
+    routed = dict(mux)
+    if op is not None and op.cond_source is not None:
+        routed[COND_MUX_SLOT] = op.cond_source
+    return routed
+
+
 @dataclass(frozen=True, slots=True)
 class Instruction:
     """One 257-bit instruction: opcode, mux routing and FIFO widths."""
 
     location: Location
-    # Keyed by output bit 0..31, plus pseudo-slot 32 for the IF/IFN
-    # condition source.
+    # Output-bit routing, keyed 0..31. The IF/IFN condition is
+    # Opcode.cond_source, not an extra key in this dict.
     mux: dict[int, MuxSource] = field(default_factory=dict)
     read: Width = Width.ZERO
     write: Width = Width.ZERO

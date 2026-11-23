@@ -6,14 +6,43 @@ The assembler is a standalone Python package. It is not tied to a particular sof
 
 ## Installation
 
+From PyPI, for command-line and library use:
+
 ```console
 python -m pip install esp-bsasm
 ```
 
-For development, install the package in editable mode together with its test dependencies:
+Optional dependency groups:
+
+| Extra | Contents | Install |
+| --- | --- | --- |
+| `test` | pytest, pytest-cov, and the language-server extras (so LSP tests run) | `pip install "esp-bsasm[test]"` |
+| `lsp` | pygls and lsprotocol for the language server | `pip install "esp-bsasm[lsp]"` |
+| `dev` | commitizen (Espressif rules) for version bumps and changelogs | `pip install "esp-bsasm[dev]"` |
+
+### Installing from a source checkout
+
+Clone the repository and install in editable mode with the extras you need:
 
 ```console
-python -m pip install -e ".[test]"
+git clone <this repository>
+cd esp-bsasm
+python -m pip install -e ".[test,lsp]"
+```
+
+A plain `pip install -e .` (no extras) is enough for the command line and the Python API. Editable mode points the installation at your working tree, so code and grammar changes take effect without reinstalling.
+
+To install from source without editable mode (for example to try an unmerged branch as-is):
+
+```console
+python -m pip install "esp-bsasm[lsp] @ file:///path/to/esp-bsasm"
+```
+
+Verify the installation:
+
+```console
+bsasm --help
+python -c "import bsasm; print(bsasm.__version__)"
 ```
 
 ## Command-line usage
@@ -45,11 +74,51 @@ binary = bsasm.encode(program)
 
 `source_text` is a BitScrambler assembly program and `chipcfg` describes the available instruction groups for the target hardware. The returned `binary` is the contents of a `.bsbin` file.
 
+## Editor support (VS Code)
+
+A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. The editor reports every syntax error it can recover (the CLI stops at the first) and analyzes with the CLI's default `support_all` configuration (it does not take a `-c` chip-capability file).
+
+Coloring and diagnostics appear only after the language server starts. If `esp-bsasm[lsp]` is missing from the interpreter in `bsasm.python`, the file stays plain text; the server log is under *Output* → *BitScrambler Assembly Language Server*.
+
+The server is `python -m bsasm.lsp`, also installed as the `bsasm-lsp` command.
+
+To set it up from a source checkout:
+
+1. Install the package with the language-server extra:
+
+   ```console
+   python -m pip install -e ".[lsp]"
+   ```
+
+2. Build and install the extension (requires Node.js):
+
+   ```console
+   cd editors/vscode
+   npm install
+   npm run package
+   code --install-extension esp-bsasm-<version>.vsix
+   ```
+
+3. Point the extension at the interpreter that has the package installed. It launches `python -m bsasm.lsp` with the `bsasm.python` setting (default `python`). In VS Code settings:
+
+   ```json
+   "bsasm.python": "/path/to/python-with-esp-bsasm"
+   ```
+
+4. Open a `.bsasm` file. Expect live diagnostics for syntax errors, colored mnemonics, source bits, comments and numbers, the label outline in the outline view, completion while typing, and F12 navigation from a jump target to its label.
+
 ## Documentation
 
 For the language reference, BitScrambler programming model, and binary format, see the [ESP32-C5 Technical Reference Manual — BitScrambler](https://documentation.espressif.com/esp32-c5_technical_reference_manual_en.pdf) and the [ESP-IDF BitScrambler programming guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c5/api-reference/peripherals/bitscrambler.html).
 
 ## Development
+
+Set up a development environment once:
+
+```console
+python -m pip install -e ".[test,dev]"
+pre-commit install
+```
 
 The grammar is defined in [`BitScrambler.g4`](BitScrambler.g4). Generated ANTLR sources are committed under `src/bsasm/generated/`, so using the package does not require Java or ANTLR to be installed.
 
@@ -71,7 +140,7 @@ Run the test suite with:
 python -m pytest
 ```
 
-The tests include the BitScrambler corpus and command-line coverage. They also check decoded fields in generated `.bsbin` files against the expected sidecar data.
+The tests include the BitScrambler corpus and command-line coverage. They also check decoded fields in generated `.bsbin` files against the expected sidecar data. Linting and formatting run through the installed pre-commit hooks on every commit.
 
 ## Advanced development: changing the grammar
 
@@ -92,6 +161,7 @@ After changing `BitScrambler.g4`, run `python regenerate.py`, commit the generat
 5. Handle the new statement in `src/bsasm/sema.py`, including chip capability checks where applicable.
 6. Update `src/bsasm/encoder.py` only when the instruction introduces a genuinely new hardware opcode pattern; the existing opcode base table already covers the standard opcode families.
 7. Add or update tests under `tests/`, including a `.bsasm` and sidecar `.json` pair when the instruction affects the binary corpus.
+8. Update `src/bsasm/lsp.py`: add the mnemonic to `_MNEMONIC_TOKENS` (highlighting and completion derive from that list) and `_HOVER_DOCS`.
 
 ## Advanced development: adding a configuration key
 
@@ -101,6 +171,7 @@ After changing `BitScrambler.g4`, run `python regenerate.py`, commit the generat
 4. Add the corresponding handling to `_collect_cfg` in `src/bsasm/sema.py` and preserve byte-identical defaults for existing programs.
 5. Update `src/bsasm/encoder.py` only when the configuration value is represented in the `.bsbin` header.
 6. Add regression tests under `tests/`.
+7. Update `src/bsasm/lsp.py`: add the key/value tokens to `_CFG_KEY_TOKENS` / `_CFG_VALUE_TOKENS` and `_HOVER_DOCS`.
 
 ## Package structure
 

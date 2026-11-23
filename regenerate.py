@@ -10,8 +10,8 @@ it regenerates the modules with a pinned ANTLR version and can verify in CI
 (--check) that the committed modules are in sync with BitScrambler.g4.
 
 Usage:
-    python tools/bsasm/regenerate.py           # regenerate in place
-    python tools/bsasm/regenerate.py --check   # fail if out of sync
+    python regenerate.py           # regenerate in place
+    python regenerate.py --check   # fail if out of sync
 """
 
 import argparse
@@ -98,8 +98,7 @@ def main() -> None:
         if mismatched:
             names = ', '.join(mismatched)
             sys.exit(
-                f'{GENERATED} is out of sync with {GRAMMAR.name} for: {names}\n'
-                'Run tools/bsasm/regenerate.py and commit the result.'
+                f'{GENERATED} is out of sync with {GRAMMAR.name} for: {names}\nRun regenerate.py and commit the result.'
             )
         print(f'{GENERATED} is in sync with {GRAMMAR.name}.')
         return

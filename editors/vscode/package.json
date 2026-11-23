@@ -1,0 +1,58 @@
+{
+  "name": "esp-bsasm",
+  "displayName": "ESP BitScrambler Assembly",
+  "description": "BitScrambler assembly (.bsasm) language support for ESP-IDF, powered by the esp-bsasm language server.",
+  "version": "0.1.0",
+  "publisher": "espressif",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:bsasm"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "bsasm",
+        "aliases": [
+          "BitScrambler Assembly",
+          "bsasm"
+        ],
+        "extensions": [
+          ".bsasm"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "ESP BitScrambler Assembly",
+      "properties": {
+        "bsasm.python": {
+          "type": "string",
+          "default": "python",
+          "description": "Python interpreter that has the esp-bsasm[lsp] package installed."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "vscode:prepublish": "npm run compile",
+    "package": "npx --yes @vscode/vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^11.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/espressif/esp-bsasm.git"
+  }
+}
