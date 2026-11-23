@@ -1,0 +1,6 @@
+.gitignore
+.vscodeignore
+package-lock.json
+node_modules
+*.vsix
+extension.js

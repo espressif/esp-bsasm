@@ -15,15 +15,15 @@ byte from its most significant bit down.
 import struct
 
 from bsasm.errors import AssemblerError
+from bsasm.model import COND_MUX_SLOT
 from bsasm.model import CounterSel
 from bsasm.model import Halves
 from bsasm.model import Instruction
 from bsasm.model import LutWidth
-from bsasm.model import MuxSource
 from bsasm.model import Opcode
 from bsasm.model import OpcodeKind
 from bsasm.model import Program
-from bsasm.model import check_sources_compatible
+from bsasm.model import mux_with_condition
 
 # If we have multiple BitScrambler versions, this'll indicate what hardware
 # we're expecting to run on. Increase BITSCRAMBLER_BINARY_VER if the on-disk
@@ -48,9 +48,6 @@ _OP_BASES = {
     OpcodeKind.LOOP: 0x2000000,
 }
 
-# Pseudo-slot in the mux map holding the IF/IFN condition source; its value
-# goes into the opcode's src field instead of a CTL_MUX_SEL field.
-_COND_SLOT = 32
 
 # Mux inputs that the program never routes default to the fixed-low source.
 _DEFAULT_LOW_INPUT = 94  # the 'l' input
@@ -96,7 +93,7 @@ def encode(program: Program) -> bytes:
         raise AssemblerError('Program has more than eight instructions.')
 
     out = bytearray()
-    lut_words = _reformat_lut(program.lut, program.meta.lut_width)
+    lut_words = reformat_lut(program.lut, program.meta.lut_width)
 
     out += struct.pack(
         HEADER_FMT,
@@ -121,8 +118,12 @@ def encode(program: Program) -> bytes:
     return bytes(out)
 
 
-def _reformat_lut(lut: tuple[int, ...], lut_width: LutWidth) -> list[int]:
-    """Pack LUT values into 32-bit words for the configured width."""
+def reformat_lut(lut: tuple[int, ...], lut_width: LutWidth) -> list[int]:
+    """Pack LUT values into 32-bit words for the configured width.
+
+    Public because the CLI reports the word count actually stored in the
+    binary, which differs from ``len(lut)`` for 8/16-bit widths.
+    """
     values = list(lut)
     if lut_width == LutWidth.BITS8:
         values.extend([0] * (-len(values) % 4))
@@ -139,36 +140,23 @@ def _reformat_lut(lut: tuple[int, ...], lut_width: LutWidth) -> list[int]:
 def _encode_inst(inst: Instruction) -> bytes:
     bits = _BitWriter()
 
-    mux = dict(inst.mux)
     op = inst.op
     if op is None:
         # An instruction without an opcode defaults to NOP, which is ADDA 0
         # with both counter halves written back.
         op = Opcode(kind=OpcodeKind.ADD, location=inst.location, counter=CounterSel.A, halves=Halves.FULL, value=0)
-    if op.cond_source is not None:
-        mux[_COND_SLOT] = op.cond_source
+    mux = mux_with_condition(inst.mux, op)
 
-    # Instruction-wide control bits: every routed source may require
-    # specific values; sources must agree pairwise, which is checked here
-    # over all routed inputs exactly like in the original assembler so the
-    # conflict diagnostics point at the same two operands.
-    # One loop over all 33 slots, exactly like in the original assembler:
-    # each routed slot's 7-bit selection goes at its own position in the
-    # stream; unrouted ones encode the fixed-low source.
+    # One loop over all 33 slots: each routed slot's 7-bit selection goes at
+    # its own position in the stream; unrouted ones encode the fixed-low
+    # source. Source compatibility was checked in sema (build time).
     flags = {'rel_addr': 0, 'ctrsel': 0, 'lutsel': 0}
-    for i in range(_COND_SLOT + 1):
+    for i in range(COND_MUX_SLOT + 1):
         if i not in mux:
-            if i < _COND_SLOT:
+            if i < COND_MUX_SLOT:
                 # Unrouted mux inputs select the fixed-low source.
                 bits.add_bits(_DEFAULT_LOW_INPUT, 7)
             continue
-        # Checking each input against each following one reports exactly
-        # which two operands clash.
-        for j in range(i + 1, _COND_SLOT + 1):
-            if j in mux:
-                message = check_sources_compatible(mux[i], mux[j])
-                if message:
-                    raise AssemblerError(_conflict_message(mux[i], mux[j], message))
         src = mux[i]
         if src.rel_addr is not None:
             flags['rel_addr'] = int(src.rel_addr)
@@ -176,7 +164,7 @@ def _encode_inst(inst: Instruction) -> bytes:
             flags['ctrsel'] = src.ctrsel
         if src.lutsel is not None:
             flags['lutsel'] = src.lutsel
-        if i < _COND_SLOT:
+        if i < COND_MUX_SLOT:
             bits.add_bits(src.index, 7)
 
     # Opcode field, 26 bits: bit 25 LOOP flag, 24 counter, 23/22 halves,
@@ -209,9 +197,3 @@ def _encode_inst(inst: Instruction) -> bytes:
         raise AssemblerError(f'Internal error: instruction size is {bits.size()}!')
     bits.add_bits(0, INSTRUCTION_PAD_BITS)
     return bits.to_bytes()
-
-
-def _conflict_message(first: MuxSource, second: MuxSource, message: str) -> str:
-    first_at = f'{first.location.describe()}: "{first.text}"'
-    second_at = f'{second.location.describe()}: "{second.text}"'
-    return f'{first_at} and {second_at}: {message}'

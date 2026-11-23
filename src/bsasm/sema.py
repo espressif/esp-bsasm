@@ -7,13 +7,15 @@ ranges and spellings, label resolution, the ctrsel/lutsel/rel_addr
 compatibility rules, per-chip instruction gating and the per-bundle
 'unusually many opcodes' checks. The behaviour mirrors the original
 assembler's four passes; the differences are deliberate and documented in
-tools/bsasm/README.md.
+the repository README.md.
 """
 
+from dataclasses import dataclass
 from dataclasses import replace
 
 from bsasm.errors import AssemblerSyntaxError
 from bsasm.errors import Location
+from bsasm.model import COND_MUX_SLOT
 from bsasm.model import AddctiSub
 from bsasm.model import AddSub
 from bsasm.model import Atom
@@ -46,6 +48,7 @@ from bsasm.model import SubInstr
 from bsasm.model import Width
 from bsasm.model import WidthSub
 from bsasm.model import check_sources_compatible
+from bsasm.model import mux_with_condition
 
 # The mux input names, in CTL_MUX_SEL value order (see the TRM mux source
 # table). The 32 empty strings are the 32..63 region, which is multiplexed
@@ -66,6 +69,47 @@ _INPUTS_CTRSEL_SET = tuple(f'a{i}' for i in range(16)) + tuple(f'b{i}' for i in 
 _INPUTS_CTRSEL_CLR = tuple(str(i) for i in range(32, 64))
 _INPUT_LUT_BITS = tuple(f'l{i}' for i in range(32))
 # fmt: on
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpelling:
+    """One mux-source name the assembler accepts, for editor completions."""
+
+    name: str
+    detail: str
+    allows_relative: bool  # True iff CTL_MUX_SEL index is below 64
+    lut_index: int | None = None  # 0..31 when this is ``lN``
+
+
+def source_spellings() -> list[SourceSpelling]:
+    """Every valid mux-source spelling, derived from the :func:`_parse_input` tables.
+
+    Empty names (the multiplexed-region placeholder in ``_INPUTS[32:64]``)
+    are omitted. ``allows_relative`` follows the same ``index < 64`` rule as
+    :func:`_parse_input`. LUT-bit filtering by ``cfg lut_width_bits`` stays
+    with the caller, which uses :attr:`SourceSpelling.lut_index`.
+    """
+    items = [
+        *[SourceSpelling(name, 'input FIFO bit', True) for name in _INPUTS[:32]],
+        *[
+            SourceSpelling(name, 'counter a bit' if name.startswith('a') else 'counter b bit', True)
+            for name in _INPUTS_CTRSEL_SET
+        ],
+        *[SourceSpelling(name, 'reg_mem1 bit', True) for name in _INPUTS_CTRSEL_CLR],
+        *[SourceSpelling(name, 'LUT bit', True, lut_index=i) for i, name in enumerate(_INPUT_LUT_BITS)],
+    ]
+    for index, name in enumerate(_INPUTS[64:], start=64):
+        if index < 94:
+            detail = 'comparator'
+        elif index == 94:
+            detail = 'fixed low'
+        elif index == 95:
+            detail = 'fixed high'
+        else:
+            detail = 'previous output bit'
+        items.append(SourceSpelling(name, detail, False))
+    return items
+
 
 # Where in the multiplexed region the LUT outputs live, per LUT width.
 _LUT_STARTS = {LutWidth.BITS8: 24, LutWidth.BITS16: 16, LutWidth.BITS32: 0}
@@ -187,21 +231,24 @@ def _collect_lut(statements: list[Statement], lut_width: LutWidth) -> list[int]:
 # Value and source parsing ---------------------------------------------------
 
 
-def _parse_val(atom: Atom, minimum: int, maximum: int) -> int:
-    """Parse a NUMBER token's spelling, preserving the original quirks.
+def _parse_int(text: str) -> int:
+    """Parse a NUMBER spelling the way Python integer literals work.
 
-    Hex and binary spellings are only recognised in lower case and without a
-    sign ('-0x10' is not an integer), because the original assembler ran
-    int() over the already-lower-cased word with only a text prefix check.
+    ``int(text, 0)`` picks up ``0x`` / ``0o`` / ``0b`` (and a leading sign).
+    Bare decimals with leading zeros (``08``) are not Python literals, but
+    the grammar's decimal alternative still emits them; fall back to base 10.
     """
-    text = atom.text.lower()
     try:
-        if text[:2] == '0x':
-            value = int(text[2:], 16)
-        elif text[:2] == '0b':
-            value = int(text[2:], 2)
-        else:
-            value = int(text)
+        return int(text, 0)
+    except ValueError:
+        return int(text, 10)
+
+
+def _parse_val(atom: Atom, minimum: int, maximum: int) -> int:
+    """Parse a NUMBER token into an int in ``[minimum, maximum]``."""
+    text = atom.text
+    try:
+        value = _parse_int(text)
     except ValueError:
         raise AssemblerSyntaxError(atom.location, f"'{text}' is not an integer") from None
     if value < minimum or value > maximum:
@@ -250,11 +297,17 @@ def _parse_input(atom: Atom, lut_width: LutWidth) -> MuxSource:
             )
         index = i + 32 + _LUT_STARTS[lut_width]
         lutsel = 1
+    elif _looks_like_number(text):
+        # ``set 0 0x10`` is FIFO bit 16. Re-enter with the decimal spelling
+        # so table lookup and ``+a`` share one path.
+        value = _parse_val(Atom(text, atom.location), 0, 63)
+        suffix = '+a' if rel_addr else ''
+        return _parse_input(Atom(f'{value}{suffix}', atom.location), lut_width)
     else:
-        raise AssemblerSyntaxError(atom.location, f"'Input {text} is not valid.")
+        raise AssemblerSyntaxError(atom.location, f"Input '{text}' is not valid.")
 
     if index >= 64 and rel_addr:
-        raise AssemblerSyntaxError(atom.location, f"'LUT input {text} cannot be relatively addressed.")
+        raise AssemblerSyntaxError(atom.location, f"LUT input '{text}' cannot be relatively addressed.")
 
     # Only inputs below 64 can be relatively addressed; for those, rel_addr
     # is a hard requirement (False counts as one), for the others it is
@@ -330,13 +383,23 @@ def _parse_input_range(start: Atom, end: Atom | None, lut_width: LutWidth) -> li
     ]
 
 
+def _looks_like_number(text: str) -> bool:
+    """True if ``text`` parses as a NUMBER spelling (see :func:`_parse_int`)."""
+    try:
+        _parse_int(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _parse_output_range(start: Atom, end: Atom | None) -> range:
-    """Expand an output bit selection into a (possibly backwards) range."""
-    first = int(start.text)
-    last = first if end is None else int(end.text)
-    text = start.text if end is None else f'{start.text}..{end.text}'
-    if not 0 <= first <= 31 or not 0 <= last <= 31:
-        raise AssemblerSyntaxError(start.location, f"'{text}' is not a valid integer or range)")
+    """Expand an output bit selection into a (possibly backwards) range.
+
+    Endpoints are NUMBER tokens, so ``int(..., 0)`` spellings are accepted
+    the same way as LUT values and immediates (``set 0x10 5`` is bit 16).
+    """
+    first = _parse_val(start, 0, 31)
+    last = first if end is None else _parse_val(end, 0, 31)
     return range(first, last + 1) if first <= last else range(first, last - 1, -1)
 
 
@@ -406,7 +469,25 @@ class _InstBuilder:
         self._op: Opcode | None = None
 
     def build(self) -> Instruction:
+        self._check_mux_conflicts()
         return Instruction(location=self._location, mux=self._mux, read=self._read, write=self._write, op=self._op)
+
+    def _check_mux_conflicts(self) -> None:
+        """Pairwise source compatibility over all 33 mux slots.
+
+        Same slot order and first-conflict-wins behavior as the original
+        assembler's encode-time check, now raised at analysis time as a
+        located :class:`AssemblerSyntaxError`.
+        """
+        mux = mux_with_condition(self._mux, self._op)
+        for i in range(COND_MUX_SLOT + 1):
+            if i not in mux:
+                continue
+            for j in range(i + 1, COND_MUX_SLOT + 1):
+                if j in mux:
+                    message = check_sources_compatible(mux[i], mux[j])
+                    if message:
+                        raise AssemblerSyntaxError(mux[i].location, message, mux[j].location)
 
     def add(self, sub: SubInstr) -> None:
         match sub:

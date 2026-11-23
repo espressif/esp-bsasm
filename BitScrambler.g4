@@ -9,7 +9,7 @@
 // languages. Everything that needs a readable diagnostic instead of a
 // generic parse error - numeric ranges, label resolution, ctrsel/lutsel/
 // rel_addr conflicts, per-chip instruction support - is checked by the
-// assembler (src/bsasm/sema.py); see tools/bsasm/README.md for the full
+// assembler (src/bsasm/sema.py); see the repository README.md for the full
 // picture and for the 'how to add an instruction' walkthrough.
 //
 // Design notes
@@ -37,10 +37,8 @@
 //   'loopa:' is a label that happens to share a name with the LOOPA
 //   mnemonic. References to keyword-shaped labels ('jmp set') work because
 //   the `identifier` rule accepts every keyword token.
-// * Numbers keep an optional sign in the token so that '-0x10' reaches the
-//   assembler as one word and is rejected with the historical "not an
-//   integer" diagnostic, instead of being silently split into '-' and
-//   '0x10'.
+// * Numbers keep an optional sign in the token so that '-0x10' is one
+//   integer (Python ``int(..., 0)``), not a stray '-' plus a hex word.
 
 grammar BitScrambler;
 
@@ -50,7 +48,7 @@ grammar BitScrambler;
 
 // A comment runs from '#' to the end of the line. The line terminator
 // itself is not part of the comment and still terminates the statement.
-COMMENT : '#' ~[\r\n]* -> skip ;
+COMMENT : '#' ~[\r\n]* -> channel(HIDDEN) ;
 
 // Horizontal whitespace is insignificant. '\r' is deliberately NOT here:
 // NEWLINE below accepts it, so LF, CRLF and lone-CR files all yield one
@@ -119,10 +117,11 @@ REL_OPERAND : NAMEPART* '+' [aA] ;
 // 'loopa:' is one LABEL token instead of LOOPA followed by a stray colon.
 LABEL : [A-Za-z_] [A-Za-z0-9_]* ':' ;
 
-// Integers: hex, binary or decimal, with an optional sign. The sign is part
-// of the token; whether a spelling is acceptable ('-0x10' is not, '-10' is)
-// is a semantic decision and keeps its historical diagnostic.
+// Integers: Python-style literals (hex / octal / binary / decimal), optional
+// sign included in the token. ``int(text, 0)`` in the assembler recognises
+// the same prefixes.
 NUMBER : [-+]? '0' [xX] [0-9a-fA-F]+
+       | [-+]? '0' [oO] [0-7]+
        | [-+]? '0' [bB] [01]+
        | [-+]? [0-9]+
        ;

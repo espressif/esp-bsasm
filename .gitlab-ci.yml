@@ -63,6 +63,23 @@ regenerate_check:
     # though tag pipelines do not have a useful branch diff for `changes`.
     - if: '$CI_COMMIT_TAG'
 
+# VS Code extension compiles (catches a broken client before a release tag).
+vscode_extension:
+  stage: codecheck
+  image: node:22-slim
+  tags:
+    - shiny
+  interruptible: true
+  needs: []
+  script:
+    - cd editors/vscode
+    - npm install --no-fund --no-audit
+    - npm run compile
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
 # Pytest. needs: [] starts the jobs without waiting for codecheck.
 .pytest_template:
   stage: test

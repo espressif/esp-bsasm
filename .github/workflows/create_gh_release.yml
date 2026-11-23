@@ -49,3 +49,21 @@ jobs:
           name: Version ${{ steps.get_version.outputs.VERSION }}
           draft: true
           prerelease: false
+      # The draft release above is created before the extension is packaged
+      # on purpose: the changelog release is the critical path (publishing
+      # it triggers release_pypi.yml), so a vsce hiccup must not block it.
+      # A packaging failure leaves the release without the asset and fails
+      # loudly in the step right below.
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Package the VS Code extension
+        run: |
+          cd editors/vscode
+          npm install --no-fund --no-audit
+          npm run package
+      - name: Upload the extension to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" editors/vscode/*.vsix
