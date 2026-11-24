@@ -101,7 +101,17 @@ class BitScramblerParser ( Parser ):
     sharedContextCache = PredictionContextCache()
 
     literalNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                     "','", "'..'" ]
+                     "','", "'..'", "'cfg'", "'lut'", "'prefetch'", "'trailing_bytes'", 
+                     "'eof_on'", "'lut_width_bits'", "'loop_ends_on'", "'equal'", 
+                     "'equal_or_greater'", "'upstream'", "'downstream'", 
+                     "'true'", "'false'", "'set'", "'write'", "'read'", 
+                     "'loopa'", "'loopb'", "'adda'", "'addah'", "'addal'", 
+                     "'addb'", "'addbh'", "'addbl'", "'if'", "'ifn'", "'ldctda'", 
+                     "'ldctdah'", "'ldctdal'", "'ldctdb'", "'ldctdbh'", 
+                     "'ldctdbl'", "'ldctia'", "'ldctiah'", "'ldctial'", 
+                     "'ldctib'", "'ldctibh'", "'ldctibl'", "'addctia'", 
+                     "'addctiah'", "'addctial'", "'addctib'", "'addctibh'", 
+                     "'addctibl'", "'jmp'", "'nop'" ]
 
     symbolicNames = [ "<INVALID>", "COMMENT", "WS", "NEWLINE", "COMMA", 
                       "RANGE", "CFG", "LUT", "K_PREFETCH", "K_TRAILING_BYTES", 

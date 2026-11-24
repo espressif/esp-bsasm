@@ -42,6 +42,7 @@ Verify the installation:
 
 ```console
 bsasm --help
+bsasm --version
 python -c "import bsasm; print(bsasm.__version__)"
 ```
 
@@ -53,12 +54,14 @@ bsasm PROGRAM.bsasm [OUTPUT.bsbin] [-c CHIP.json]
 
 If the output path is omitted, the assembler replaces the `.bsasm` suffix with `.bsbin`.
 
-The optional chip capability file allows the assembler to reject instructions that are not supported by a particular BitScrambler implementation.
+The optional chip capability file allows the assembler to reject instructions that are not supported by a particular BitScrambler implementation. It can be spelled `-c` or `--chip`.
+
+Keywords and identifiers are case-insensitive: `CFG`, `Cfg` and `cfg` are the same keyword. The original spelling is kept in token text for diagnostics and editor features, so labels and messages never lose their casing.
 
 You can also invoke the command through Python:
 
 ```console
-python -m bsasm PROGRAM.bsasm [OUTPUT.bsbin]
+python -m bsasm PROGRAM.bsasm [OUTPUT.bsbin] [-c CHIP.json]
 ```
 
 The command exits with status 2 when the source cannot be assembled and reports diagnostics with one-based line and column locations.
@@ -148,9 +151,9 @@ The tests include the BitScrambler corpus and command-line coverage. Each corpus
 
 The grammar is the single source of truth for the syntax of the BitScrambler language. Keep it free of target-language actions and semantic predicates so that it remains a portable ANTLR grammar.
 
-When adding a keyword token, define it before `NAME` because equal-length lexer matches are resolved in favor of the first rule, and add the keyword to the `identifier` rule when labels with that spelling must remain valid, such as `loopa:` or `jmp set`.
+When adding a keyword token, define it before `NAME` because equal-length lexer matches are resolved in favor of the first rule, and add the keyword to the `identifier` rule when labels with that spelling must remain valid, such as `loopa:` or `jmp set`. Write keyword tokens as lowercase literals (`CFG : 'cfg' ;`): the grammar sets `caseInsensitive = true`, so ANTLR folds case into the generated ATN at generation time. Do not spell out `[aA][bB]`-style fragments — they are redundant and were removed.
 
-Keep glued constructs as single lexer tokens when whitespace is not allowed; for example, `AUX_CMP` represents `bl<=o0` and `REL_OPERAND` represents `l0+a`. A content statement occupies one line, and a comma always introduces another sub-instruction rather than acting as a dangling separator.
+Keep glued constructs as single lexer tokens when whitespace is not allowed; for example, `AUX_CMP` represents `bl<=o0` and `REL_OPERAND` represents `l0+a`. Write their letters as lowercase too and let `caseInsensitive` handle uppercase forms. A content statement occupies one line, and a comma always introduces another sub-instruction rather than acting as a dangling separator.
 
 After changing `BitScrambler.g4`, run `python regenerate.py`, commit the generated files under `src/bsasm/generated/`, and add or update tests before submitting the change.
 
