@@ -151,3 +151,72 @@ def test_cli_reports_packed_lut_word_count(run_bsasm, tmp_path: Path) -> None:
     assert run.returncode == 0
     assert outfile.exists()
     assert '2 32-bit words of LUT' in run.stdout + run.stderr
+
+
+def test_input_range_spans_the_0_31_and_32_63_boundary() -> None:
+    # A range may span the 0..31 / 32..63 boundary when the multiplexed half
+    # is a plain reg_mem1 bit (no ctrsel/lutsel requirement).
+    bsasm.encode(bsasm.assemble('set 0..31 32\n'))
+
+
+def test_invalid_input_range_messages() -> None:
+    assert 'l0..o0 is not a valid range of input selections' in _error_text('set 0 l0..o0')
+    assert 'Try splitting up the range.' in _error_text('set 0 l0..o0')
+    assert 'Did you forget an L at the end of the range?' in _error_text('set 0 l0..15')
+
+
+def test_backwards_input_range() -> None:
+    bsasm.encode(bsasm.assemble('set 0..15 a15..a0\n'))
+
+
+def test_jump_target_past_end_reports_program_size() -> None:
+    assert "jump target 'end' points past the end of the program" in _error_text('jmp end\nnop\nend:\n')
+
+
+# ---------------------------------------------------------------------------
+# Semantic diagnostics the corpus does not reach
+# ---------------------------------------------------------------------------
+
+
+def _error_text(source: str) -> str:
+    with pytest.raises(AssemblerError) as ctx:
+        bsasm.assemble(source)
+    return str(ctx.value)
+
+
+def test_cfg_loop_ends_on_rejects_non_keyword_values() -> None:
+    # The grammar accepts only the two value keywords; anything else is a
+    # syntax error, never a silently-defaulted header byte.
+    assert 'unexpected' in _error_text('cfg loop_ends_on bogus')
+    assert 'expected one of' in _error_text('cfg loop_ends_on 2')
+
+
+def test_lut_input_out_of_configured_width() -> None:
+    assert 'LUT is configured to be only 8 bits wide' in _error_text('cfg lut_width_bits 8\nset 0 l20')
+    assert 'LUT is configured to be only 16 bits wide' in _error_text('cfg lut_width_bits 16\nset 0 l20')
+    # The default 32-bit LUT admits l20.
+    bsasm.encode(bsasm.assemble('set 0 l20\n'))
+
+
+def test_invalid_input_name_is_reported() -> None:
+    assert "Input 'bogus' is not valid." in _error_text('set 0 bogus')
+
+
+def test_lut_input_cannot_be_relatively_addressed() -> None:
+    # 'h' is the fixed-high comparator at input 95: above 64, so a '+a'
+    # suffix is meaningless on it.
+    assert "LUT input 'h' cannot be relatively addressed." in _error_text('set 0 h+a')
+
+
+def test_range_length_mismatch_is_reported() -> None:
+    assert 'ranges not the same length' in _error_text('set 0..3 0..1')
+
+
+def test_duplicate_output_across_sets_is_reported() -> None:
+    assert 'output 0 already set earlier in instruction' in _error_text('set 0 1, set 0 2')
+
+
+def test_multiple_opcodes_in_one_bundle_is_reported() -> None:
+    # Width subs (write/read) are not opcodes: 'write 8, adda 1' is fine.
+    bsasm.encode(bsasm.assemble('write 8, adda 1\n'))
+    assert 'Cannot have multiple opcodes' in _error_text('adda 1, addb 2')

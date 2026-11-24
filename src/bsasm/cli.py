@@ -23,8 +23,8 @@ def read_file(filename: str) -> str:
         with open(filename, encoding='utf-8') as f:
             return f.read()
     except OSError as e:
-        # Raise the tool error instead of SystemExit: the exception hook
-        # filters SystemExit, so the IDE error handler would never see it.
+        # SystemExit is filtered by the exception hook: raising the tool
+        # error keeps the IDE error handler in the loop.
         raise AssemblerError(f'Error opening {filename}: {e}') from e
     except UnicodeDecodeError as e:
         raise AssemblerError(f'Error decoding {filename}: {e}') from e

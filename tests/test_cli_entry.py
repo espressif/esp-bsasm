@@ -7,6 +7,7 @@ Default output naming is a suffix swap, not a global '.bsasm' string replace.
 """
 
 import io
+import json
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -109,3 +110,20 @@ def test_default_outfile_replaces_only_the_final_suffix(run_bsasm, tmp_path: Pat
     run = run_bsasm([str(good)], cwd=tmp_path)
     assert run.returncode == 0
     assert (tmp_path / 'xbsasm.bsbin').exists()
+
+
+def test_unsupported_instruction_reports_clean_error(run_bsasm, tmp_path: Path) -> None:
+    # A well-formed chip capability file that lacks the instruction: the
+    # CLI must reject it with exit 2 and no traceback.
+    good = tmp_path / 'ok.bsasm'
+    good.write_text('main:\n    addctia\n', encoding='utf-8')
+    chip = tmp_path / 'esp32p4.json'
+    chip.write_text(
+        json.dumps({'chipname': 'esp32p4', 'extra_instruction_groups': [], 'support_all': False}),
+        encoding='utf-8',
+    )
+    run = run_bsasm([str(good), '-c', str(chip)], cwd=tmp_path)
+    combined = run.stdout + run.stderr
+    assert run.returncode == 2
+    assert 'Traceback' not in combined
+    assert 'does not support this instruction' in combined

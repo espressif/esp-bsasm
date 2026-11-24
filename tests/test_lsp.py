@@ -3,7 +3,9 @@
 """Unit tests for the language-server logic (pure functions, no LSP transport)."""
 
 import pytest
+from lsprotocol import types
 
+from bsasm import lsp
 from bsasm.lsp import completions_at, definition, hover, parse_document, references, semantic_tokens, symbols
 
 PROGRAM = """# comment line
@@ -312,3 +314,201 @@ def test_completion_in_comment_and_after_lut_is_empty() -> None:
     doc = parse_document('main:\n    # cfg \n    lut \n')
     assert completions_at(doc, 1, 9) == []
     assert completions_at(doc, 2, 8) == []
+
+
+# ---------------------------------------------------------------------------
+# Handlers (pygls dispatch; test_lsp_stdio.py drives the real server)
+# ---------------------------------------------------------------------------
+
+
+class _FakeDocument:
+    """Just enough of a TextDocumentItem for the handlers in bsasm.lsp."""
+
+    def __init__(self, source: str) -> None:
+        self.source = source
+
+
+class _FakeWorkspace:
+    def __init__(self, source: str) -> None:
+        self.document = _FakeDocument(source)
+
+    def get_text_document(self, uri: str) -> _FakeDocument:
+        return self.document
+
+
+class _FakeLanguageServer:
+    """Records published diagnostics against a mutable workspace document."""
+
+    def __init__(self, source: str) -> None:
+        self.workspace = _FakeWorkspace(source)
+        self.published: list[types.PublishDiagnosticsParams] = []
+
+    def text_document_publish_diagnostics(self, params: types.PublishDiagnosticsParams) -> None:
+        self.published.append(params)
+
+
+def test_did_open_publishes_diagnostics() -> None:
+    ls = _FakeLanguageServer(PROGRAM)
+    lsp.did_open(
+        ls,
+        types.DidOpenTextDocumentParams(
+            text_document=types.TextDocumentItem(uri='file:///t.bsasm', language_id='bsasm', version=1, text=PROGRAM)
+        ),
+    )
+    assert len(ls.published) == 1
+    assert ls.published[0].diagnostics == []
+
+
+def test_did_open_publishes_semantic_errors() -> None:
+    ls = _FakeLanguageServer('jmp nowhere\n')
+    lsp.did_open(
+        ls,
+        types.DidOpenTextDocumentParams(
+            text_document=types.TextDocumentItem(
+                uri='file:///t.bsasm', language_id='bsasm', version=1, text='jmp nowhere\n'
+            )
+        ),
+    )
+    assert [d.message for d in ls.published[0].diagnostics] == ["'nowhere': Label not found."]
+
+
+def test_did_open_publishes_related_information() -> None:
+    # Conflicting sources have a second location: the editor shows it as
+    # related information.
+    ls = _FakeLanguageServer('set 0 a0, set 1 32\n')
+    lsp.did_open(
+        ls,
+        types.DidOpenTextDocumentParams(
+            text_document=types.TextDocumentItem(
+                uri='file:///t.bsasm', language_id='bsasm', version=1, text='set 0 a0, set 1 32\n'
+            )
+        ),
+    )
+    diagnostics = ls.published[0].diagnostics
+    assert diagnostics
+    assert diagnostics[0].related_information
+
+
+def test_on_hover_returns_none_outside_keywords() -> None:
+    # A number token has no hover documentation.
+    assert (
+        lsp.on_hover(
+            _FakeLanguageServer('main:\n    write 8\n'),
+            types.HoverParams(
+                text_document=types.TextDocumentIdentifier(uri='u'),
+                position=types.Position(line=1, character=9),
+            ),
+        )
+        is None
+    )
+
+
+def test_on_definition_returns_none_for_non_labels() -> None:
+    assert (
+        lsp.on_definition(
+            _FakeLanguageServer('main:\n    write 8\n'),
+            types.DefinitionParams(
+                text_document=types.TextDocumentIdentifier(uri='u'),
+                position=types.Position(line=1, character=9),
+            ),
+        )
+        is None
+    )
+
+
+def test_did_change_and_did_save_republish() -> None:
+    ls = _FakeLanguageServer(PROGRAM)
+    lsp.did_change(
+        ls,
+        types.DidChangeTextDocumentParams(
+            text_document=types.VersionedTextDocumentIdentifier(uri='file:///t.bsasm', version=2),
+            content_changes=[types.TextDocumentContentChangeWholeDocument(text=PROGRAM)],
+        ),
+    )
+    assert ls.published[-1].diagnostics == []
+
+    ls.workspace.document.source = 'jmp nowhere\n'
+    lsp.did_change(
+        ls,
+        types.DidChangeTextDocumentParams(
+            text_document=types.VersionedTextDocumentIdentifier(uri='file:///t.bsasm', version=3),
+            content_changes=[types.TextDocumentContentChangeWholeDocument(text='jmp nowhere\n')],
+        ),
+    )
+    assert ls.published[-1].diagnostics
+
+    ls.workspace.document.source = PROGRAM
+    lsp.did_save(ls, types.DidSaveTextDocumentParams(text_document=types.TextDocumentIdentifier(uri='file:///t.bsasm')))
+    assert ls.published[-1].diagnostics == []
+
+
+def test_semantic_tokens_full_returns_delta_encoded_data() -> None:
+    result = lsp.semantic_tokens_full(
+        _FakeLanguageServer(PROGRAM),
+        types.SemanticTokensParams(text_document=types.TextDocumentIdentifier(uri='u')),
+    )
+    assert result.data  # LSP wire format: delta-encoded [line, char, length, type, modifiers]
+
+
+def test_document_symbols_lists_labels() -> None:
+    result = lsp.document_symbols(
+        _FakeLanguageServer(PROGRAM),
+        types.DocumentSymbolParams(text_document=types.TextDocumentIdentifier(uri='u')),
+    )
+    assert [
+        (s.name, s.location.range.start.line, s.location.range.start.character, s.location.range.end.character)
+        for s in result
+    ] == [('main', 1, 0, 4)]
+
+
+def test_on_hover_returns_docs_for_keywords() -> None:
+    token = next(t for t in parse_document(PROGRAM).tokens if lsp._HOVER_DOCS.get(t.type))
+    hover = lsp.on_hover(
+        _FakeLanguageServer(PROGRAM),
+        types.HoverParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            position=types.Position(line=token.line - 1, character=token.column),
+        ),
+    )
+    assert hover is not None
+    assert isinstance(hover.contents, types.MarkupContent)
+    assert hover.contents.value == lsp._HOVER_DOCS[token.type]
+
+
+def test_on_definition_returns_label_location() -> None:
+    result = lsp.on_definition(
+        _FakeLanguageServer(PROGRAM),
+        types.DefinitionParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            position=types.Position(line=3, character=14),  # the 'main' jump target
+        ),
+    )
+    assert result is not None
+    assert [(loc.range.start.line, loc.range.start.character, loc.range.end.character) for loc in result] == [(1, 0, 4)]
+
+
+def test_on_references_returns_definition_and_usages() -> None:
+    result = lsp.on_references(
+        _FakeLanguageServer(PROGRAM),
+        types.ReferenceParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            position=types.Position(line=1, character=0),
+            context=types.ReferenceContext(include_declaration=True),
+        ),
+    )
+    assert [(loc.range.start.line, loc.range.start.character) for loc in result] == [(1, 0), (3, 14)]
+
+
+def test_completion_handler_returns_items() -> None:
+    result = lsp.completion(
+        _FakeLanguageServer(PROGRAM),
+        types.CompletionParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            position=types.Position(line=1, character=8),
+            context=types.CompletionContext(
+                trigger_kind=types.CompletionTriggerKind.TriggerCharacter, trigger_character=' '
+            ),
+        ),
+    )
+    assert result.is_incomplete is False
+    assert 'cfg' in {item.label for item in result.items}
