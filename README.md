@@ -142,7 +142,7 @@ Run the test suite with:
 python -m pytest
 ```
 
-The tests include the BitScrambler corpus and command-line coverage. They also check decoded fields in generated `.bsbin` files against the expected sidecar data. Linting and formatting run through the installed pre-commit hooks on every commit.
+The tests include the BitScrambler corpus and command-line coverage. Each corpus program is assembled and compared byte-for-byte against a golden `.bsbin` compiled by ESP-IDF's reference `bsasm.py`, so any change to the encoded binary is caught. Linting and formatting run through the installed pre-commit hooks on every commit.
 
 ## Advanced development: changing the grammar
 
@@ -162,7 +162,7 @@ After changing `BitScrambler.g4`, run `python regenerate.py`, commit the generat
 4. Add a `visitSub*` method to `src/bsasm/builder.py`; for A/B/H/L variants, update the mnemonic-to-counter-and-halves mapping.
 5. Handle the new statement in `src/bsasm/sema.py`, including chip capability checks where applicable.
 6. Update `src/bsasm/encoder.py` only when the instruction introduces a genuinely new hardware opcode pattern; the existing opcode base table already covers the standard opcode families.
-7. Add or update tests under `tests/`, including a `.bsasm` and sidecar `.json` pair when the instruction affects the binary corpus.
+7. Add or update tests under `tests/`. When the instruction affects the binary corpus, add a `.bsasm` source and regenerate its golden `.bsbin` with `python tests/make_golden.py /path/to/esp-idf/tools/bsasm.py`.
 8. Update `src/bsasm/lsp.py`: add the mnemonic to `_MNEMONIC_TOKENS` (highlighting and completion derive from that list) and `_HOVER_DOCS`.
 
 ## Advanced development: adding a configuration key

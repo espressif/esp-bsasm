@@ -11,6 +11,7 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from bsasm import __version__
 from bsasm.cli import run
 
 
@@ -30,6 +31,13 @@ def invoke_run(argv: list[str]) -> tuple[int | None, str, str]:
     finally:
         sys.argv = old_argv
     return code, stdout.getvalue(), stderr.getvalue()
+
+
+def test_version_option_reports_package_version() -> None:
+    code, out, err = invoke_run(['bsasm', '--version'])
+    assert code == 0
+    assert out.strip() == f'bsasm, version {__version__}'
+    assert err == ''
 
 
 def test_console_entry_reports_tool_errors_with_exit_2(tmp_path) -> None:

@@ -10,6 +10,7 @@ from esp_pylib.errors import FatalError
 from esp_pylib.excepthook import install_exception_reporting
 from esp_pylib.logger import log
 
+from bsasm import __version__
 from bsasm.encoder import encode, reformat_lut
 from bsasm.errors import AssemblerError, AssemblerErrors
 from bsasm.model import Chipcfg
@@ -41,10 +42,12 @@ def write_file(filename: str, data: bytes) -> None:
     context_settings={'help_option_names': ['-h', '--help']},
     help='BitScrambler program assembler',
 )
+@click.version_option(version=__version__, prog_name='bsasm')
 @click.argument('infile', type=click.Path(exists=True, dir_okay=False))
 @click.argument('outfile', required=False)
 @click.option(
     '-c',
+    '--chip',
     'chipcfg_path',
     type=click.Path(exists=True, dir_okay=False),
     help=('Set chip capabilities json file; if set, returns an error when an unsupported instruction is assembled'),

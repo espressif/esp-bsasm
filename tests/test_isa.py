@@ -1,14 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
-"""Pin the ISA facts in :mod:`bsasm.isa` and prove they are not duplicated.
+"""Pin the ISA facts in :mod:`bsasm.isa` and the bit layout they encode.
 
 ``BitScrambler.g4`` owns syntax; ``isa.py`` owns semantics/encoding. These
-tests guard both the values themselves and the fact that the per-module
-private names are aliases of one object rather than copies that could drift.
+tests guard the table values themselves, that per-module private names are
+aliases of one object rather than copies that could drift, and that the fields
+of an assembled binary match the TRM BitScrambler chapter. Byte-exact goldens
+pin agreement with ESP-IDF's assembler; the bit-layout checks pin agreement
+with the hardware documentation.
 """
 
-from bsasm import encoder, isa, lsp, sema
+from bsasm import assemble, encode, encoder, isa, lsp, sema
+from bsasm.isa import INPUTS
 from bsasm.model import LutWidth, OpcodeKind, Width
+
+# --- ISA tables and constants ---
 
 
 def test_modules_share_one_copy_of_each_table() -> None:
@@ -79,3 +85,109 @@ def test_bsbin_layout() -> None:
     assert isa.HEADER_LEN_WORDS == 3
     assert isa.INSTRUCTION_BITS == 257
     assert isa.INSTRUCTION_PAD_BITS == 31
+
+
+# --- Encoded bit layout vs the TRM ---
+
+
+def _bits(data: bytes, off: int, length: int) -> int:
+    # Fields are packed LSB-first per field into the byte stream, matching
+    # tools/test_bsasm/test_bsasm.py's decoder.
+    ret = 0
+    for i in range(length):
+        if data[(off + i) // 8] & (1 << ((off + i) % 8)):
+            ret |= 1 << i
+    return ret
+
+
+def _opcode(binary: bytes, index: int = 0) -> int:
+    inst = binary[12 + index * 36 : 12 + (index + 1) * 36]
+    return _bits(inst, 224, 26)
+
+
+def test_opcode_bit_layout() -> None:
+    binary = encode(
+        assemble(
+            'ldctda:\nldctda 0x1234\nloopb 100 -3 ldctda\nadda 5\naddbh 6\naddbl 7\naddb 8\naddah 9\nif b0 ldctda\n'
+        )
+    )
+    # LDCTDA: sub=3 (bits 16..20), counter A (bit 24 = 0), both halves
+    # (bits 23/22), immediate in bits 0..15.
+    op = _opcode(binary, 0)
+    assert (op >> 25) & 1 == 0
+    assert (op >> 24) & 1 == 0
+    assert (op >> 23) & 1 == 1
+    assert (op >> 22) & 1 == 1
+    assert ((op >> 16) & 0x1F) == 3
+    assert (op & 0xFFFF) == 0x1234
+    # LOOPB: bit 25 set, counter B (bit 24), target in bits 21..23,
+    # end_val in bits 5..20, signed 5-bit ctr_add in bits 0..4.
+    op = _opcode(binary, 1)
+    assert (op >> 25) & 1 == 1
+    assert (op >> 24) & 1 == 1
+    assert ((op >> 21) & 7) == 0
+    assert ((op >> 5) & 0xFFFF) == 100
+    assert (op & 0x1F) == (-3 & 31)
+    # ADD c/h/l matrix: (index, counter B, high half, low half).
+    for idx, (c, high, low) in {2: (0, 1, 1), 3: (1, 1, 0), 4: (1, 0, 1), 5: (1, 1, 1), 6: (0, 1, 0)}.items():
+        op = _opcode(binary, idx)
+        assert ((op >> 16) & 0x1F) == 0
+        assert (op >> 24) & 1 == c
+        assert (op >> 23) & 1 == high
+        assert (op >> 22) & 1 == low
+    # IF b0: sub=1, source = counter B bit 0 (input 48), no h/l bits.
+    op = _opcode(binary, 7)
+    assert ((op >> 16) & 0x1F) == 1
+    assert (op & 0x7F) == 48
+    assert (op >> 24) & 1 == 0
+
+
+def test_ifn_and_jmp_sources() -> None:
+    binary = encode(assemble('ldctda:\nifn h ldctda\njmp ldctda\n'))
+    # IFN: sub=2, 'h' is the fixed-high comparator at input 95.
+    op = _opcode(binary, 0)
+    assert ((op >> 16) & 0x1F) == 2
+    assert (op & 0x7F) == 95
+    # JMP is an IF on the same fixed-high input (TRM: "IF 95,tgt").
+    op = _opcode(binary, 1)
+    assert ((op >> 16) & 0x1F) == 1
+    assert (op & 0x7F) == 95
+
+
+def test_control_flags_and_widths() -> None:
+    inst = encode(assemble('cfg lut_width_bits 16\nread 16, write 32, set 0 5+a\n'))[12:48]
+    assert _bits(inst, 250, 2) == 2  # CTL_READ_IN = 16 bits
+    assert _bits(inst, 252, 2) == 3  # CTL_WR_OUT = 32 bits
+    assert _bits(inst, 254, 1) == 1  # CTL_MUX_REL
+    assert _bits(inst, 255, 1) == 0  # CTL_CTR_SRC_SEL
+    assert _bits(inst, 256, 1) == 0  # CTL_LUT_SRC_SEL
+    assert _bits(inst, 0, 7) == 5
+
+
+def test_mux_source_regions() -> None:
+    # LUT placement per TRM: for width N, l{n} sits at input 64 - N + n.
+    for width, base in ((32, 32), (16, 48), (8, 56)):
+        inst = encode(assemble(f'cfg lut_width_bits {width}\nset 0 l0, set 1 l{width - 1}\n'))[12:48]
+        assert _bits(inst, 0, 7) == base
+        assert _bits(inst, 7, 7) == base + width - 1
+    # Counters: 32..47 = counter A, 48..63 = counter B (TRM table).
+    inst = encode(assemble('set 0 a15, set 1 b0\n'))[12:48]
+    assert _bits(inst, 0, 7) == 47
+    assert _bits(inst, 7, 7) == 48
+    assert _bits(inst, 255, 1) == 1
+    # Previous output register: 96..127.
+    inst = encode(assemble('set 0 o31\n'))[12:48]
+    assert _bits(inst, 0, 7) == 127
+
+
+def test_comparator_table_order() -> None:
+    # The 30 comparator inputs in TRM table order: bl/bh across
+    # o0/o8/o16/o24 and b across o0/o16, each with <=, >, =.
+    groups = (
+        ('bl', ('o0', 'o8', 'o16', 'o24')),
+        ('bh', ('o0', 'o8', 'o16', 'o24')),
+        ('b', ('o0', 'o16')),
+    )
+    expected = [f'{part}{op}{off}' for part, offs in groups for off in offs for op in ('<=', '>', '=')]
+    expected += ['l', 'h']  # fixed low/high
+    assert list(INPUTS[64:96]) == expected
