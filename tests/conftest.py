@@ -6,10 +6,8 @@ import io
 import os
 import runpy
 import sys
-from collections.abc import Callable
-from collections.abc import Iterator
-from contextlib import redirect_stderr
-from contextlib import redirect_stdout
+from collections.abc import Callable, Iterator
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 

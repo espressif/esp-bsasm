@@ -11,6 +11,10 @@ from pathlib import Path
 
 import pytest
 
+import bsasm
+from bsasm.errors import AssemblerError, AssemblerErrors
+from bsasm.lsp import parse_document
+
 TESTCASES_DIR = Path(__file__).resolve().parent / 'testcases'
 
 EQUIVALENT_SET_LINES = [
@@ -70,6 +74,52 @@ def test_mux_conflict_fails_at_assemble_time(run_bsasm, tmp_path: Path) -> None:
     combined = run.stdout + run.stderr
     assert 'Traceback' not in combined
     assert 'Cannot have both counters/LUT' in combined
+
+
+def test_too_many_instructions_is_a_clean_cli_error(run_bsasm, tmp_path: Path) -> None:
+    source = tmp_path / 'prog.bsasm'
+    source.write_text('nop\n' * 9, encoding='utf-8')
+    run = run_bsasm([str(source)], cwd=tmp_path)
+    combined = run.stdout + run.stderr
+    assert run.returncode == 2
+    assert 'Traceback' not in combined
+    assert 'more than 8 instructions' in combined
+
+
+def test_public_api_reports_all_errors() -> None:
+    with pytest.raises(AssemblerErrors) as ctx:
+        bsasm.assemble('cfg prefetch 2\ncfg lut_width_bits 7\n')
+    assert len(ctx.value.errors) == 2
+    assert all(isinstance(error, AssemblerError) for error in ctx.value.errors)
+    assert 'prefetch' in str(ctx.value)
+    assert 'lut_width_bits' in str(ctx.value)
+
+
+def test_cli_reports_all_semantic_errors(run_bsasm, tmp_path: Path) -> None:
+    # Same set of errors as the LSP reports (test_lsp.py); the CLI prints
+    # each diagnostic on its own line.
+    source = tmp_path / 'prog.bsasm'
+    source.write_text('cfg prefetch 2\ncfg lut_width_bits 7\n', encoding='utf-8')
+    run = run_bsasm([str(source)], cwd=tmp_path)
+    combined = run.stdout + run.stderr
+    assert run.returncode == 2
+    assert combined.count('not an allowed value') == 2
+    assert 'prefetch' in combined
+    assert 'lut_width_bits' in combined
+    assert 'Traceback' not in combined
+
+
+def test_cli_and_lsp_report_the_same_errors(run_bsasm, tmp_path: Path) -> None:
+    src = 'cfg prefetch 2\ncfg trailing_bytes 99999\nmain:\n    write 12\n'
+    source = tmp_path / 'prog.bsasm'
+    source.write_text(src, encoding='utf-8')
+    run = run_bsasm([str(source)], cwd=tmp_path)
+    cli_lines = [line for line in (run.stdout + run.stderr).splitlines() if line.startswith('ERROR: ')]
+    lsp_messages = [d.message for d in parse_document(src).diagnostics]
+    assert run.returncode == 2
+    assert len(cli_lines) == len(lsp_messages) == 3
+    for message in lsp_messages:
+        assert any(message in line for line in cli_lines)
 
 
 def test_cli_reports_packed_lut_word_count(run_bsasm, tmp_path: Path) -> None:

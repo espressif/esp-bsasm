@@ -130,6 +130,7 @@ def test_stdio_server_round_trip(server: Server) -> None:
     result = server.request(1, 'initialize', {'processId': None, 'rootUri': None, 'capabilities': {}})
     capabilities = result['capabilities']
     assert capabilities['semanticTokensProvider']['full']
+    assert ' ' in capabilities['completionProvider']['triggerCharacters']
     server.notify('initialized', {})
 
     server.notify(
@@ -182,7 +183,17 @@ def test_stdio_server_round_trip(server: Server) -> None:
         3, 'textDocument/completion', {'textDocument': {'uri': URI}, 'position': {'line': 0, 'character': 0}}
     )
     items = completion['items'] if isinstance(completion, dict) else completion
-    assert len(items) >= 7  # the mnemonic set
+    assert len(items) >= 7  # the mnemonic set at the start of an empty line
+
+    # Context-aware: after 'cfg ' only cfg keys, never instruction mnemonics.
+    cfg_completion = server.request(
+        6, 'textDocument/completion', {'textDocument': {'uri': URI}, 'position': {'line': 1, 'character': 4}}
+    )
+    cfg_items = cfg_completion['items'] if isinstance(cfg_completion, dict) else cfg_completion
+    cfg_labels = {item['label'] for item in cfg_items}
+    assert {'prefetch', 'eof_on', 'lut_width_bits'} <= cfg_labels
+    assert 'loopa' not in cfg_labels
+    assert 'upstream' not in cfg_labels
 
     symbols = server.request(4, 'textDocument/documentSymbol', {'textDocument': {'uri': URI}})
     assert isinstance(symbols, list)

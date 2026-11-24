@@ -40,6 +40,9 @@ jobs:
           python -m venv /tmp/esp-bsasm-check
           /tmp/esp-bsasm-check/bin/python -m pip install --upgrade pip
           /tmp/esp-bsasm-check/bin/python -m pip install dist/*.whl
+          # Smoke-check only: the wheel installs and its entry point launches.
+          # Behavioural assertions live in pytest (tests/test_cli_entry.py);
+          # a release must not be blocked by a regression test.
           /tmp/esp-bsasm-check/bin/bsasm --help
       - name: Upload distributions
         uses: actions/upload-artifact@v7

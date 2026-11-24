@@ -16,20 +16,12 @@ from dataclasses import dataclass
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from bsasm.errors import AssemblerError
-from bsasm.errors import AssemblerSyntaxError
-from bsasm.errors import Location
+from bsasm.errors import AssemblerError, AssemblerSyntaxError, Location
 from bsasm.generated.BitScramblerLexer import BitScramblerLexer
-from bsasm.model import BundleStmt
-from bsasm.model import IfSub
-from bsasm.model import JmpSub
-from bsasm.model import LabelStmt
-from bsasm.model import LoopSub
-from bsasm.model import LutWidth
-from bsasm.model import Statement
-from bsasm.parsing import parse_collecting
-from bsasm.sema import analyze
-from bsasm.sema import source_spellings
+from bsasm.isa import CFG_VALUES, VALID_WIDTHS
+from bsasm.model import COND_MUX_SLOT, BundleStmt, IfSub, JmpSub, LabelStmt, LoopSub, LutWidth, Statement
+from bsasm.parsing import parse
+from bsasm.sema import analyze, source_spellings
 
 # ---------------------------------------------------------------------------
 # Document analysis: one parse of a document yields everything the server
@@ -68,23 +60,21 @@ def _semantic_diagnostic(error: AssemblerError) -> DocDiagnostic:
 
 def parse_document(source: str) -> ParsedDocument:
     """Parse ``source`` collecting all diagnostics and the token stream."""
-    collected = parse_collecting(source)
-    diagnostics = [DocDiagnostic(location, message) for location, message in collected.errors]
+    parsed = parse(source)
+    diagnostics = [_semantic_diagnostic(error) for error in parsed.errors]
     lut_width = None
     if not diagnostics:
-        # Syntax is clean: run the semantic passes with the chip-agnostic
-        # default capabilities (the same defaults the CLI uses without -c).
-        try:
-            program = analyze(collected.statements)
+        # Syntax is clean: the same analysis the CLI and assemble() run.
+        program, semantic_errors = analyze(parsed.statements)
+        diagnostics.extend(_semantic_diagnostic(e) for e in semantic_errors)
+        if not semantic_errors:
             lut_width = program.meta.lut_width
-        except AssemblerError as e:
-            diagnostics.append(_semantic_diagnostic(e))
 
     return ParsedDocument(
-        source=collected.source,
+        source=parsed.source,
         diagnostics=diagnostics,
-        tokens=collected.tokens,
-        statements=collected.statements,
+        tokens=parsed.tokens,
+        statements=parsed.statements,
         lut_width=lut_width,
     )
 
@@ -408,44 +398,124 @@ def _keyword_spelling(token_type: int) -> str:
     return name.lower()
 
 
-def completions(lut_width: LutWidth | None = None) -> list[dict]:
-    """Completion items: mnemonics, source bits, cfg keywords/values.
+def _mnemonic_items() -> list[dict]:
+    return [{'label': _keyword_spelling(t), 'kind': 'keyword', 'detail': 'instruction'} for t in _MNEMONIC_TOKENS]
 
-    Mnemonics and cfg spellings come from the same token lists used for
-    highlighting. Source names come from :func:`bsasm.sema.source_spellings`,
-    so the list cannot drift from what :func:`bsasm.sema._parse_input`
-    accepts. ``+a`` relative spellings are offered for every input that
-    supports them. LUT bits depend on ``cfg lut_width_bits``: when the
-    document parses, ``lut_width`` filters and completes them exactly;
-    otherwise all 32 are offered without relative variants.
 
-    The client filters by the typed prefix; the server returns the full
-    list (bsasm programs are small and the lists are short).
+def _cfg_key_items() -> list[dict]:
+    return [{'label': _keyword_spelling(t), 'kind': 'keyword', 'detail': 'cfg key'} for t in _CFG_KEY_TOKENS]
+
+
+def _source_items(lut_width: LutWidth | None) -> list[dict]:
+    """Every mux-source spelling, including ``+a`` where it is legal.
+
+    Source names come from :func:`bsasm.sema.source_spellings`, so the list
+    cannot drift from what :func:`bsasm.sema._parse_input` accepts. LUT bits
+    depend on ``cfg lut_width_bits``: when the document parses, ``lut_width``
+    filters them exactly; otherwise all 32 are offered without relative forms.
     """
     items = []
-    for token in _MNEMONIC_TOKENS:
-        items.append({'label': _keyword_spelling(token), 'kind': 'keyword', 'detail': 'instruction'})
-    for token in _CFG_KEY_TOKENS:
-        items.append({'label': _keyword_spelling(token), 'kind': 'keyword', 'detail': 'cfg key'})
-    for token in _CFG_VALUE_TOKENS:
-        items.append({'label': _keyword_spelling(token), 'kind': 'value', 'detail': 'cfg value'})
-
-    def add_source(label: str, detail: str) -> None:
-        items.append({'label': label, 'kind': 'variable', 'detail': detail})
-
     for src in source_spellings():
         if src.lut_index is not None:
             if lut_width is not None and src.lut_index >= int(lut_width):
                 continue  # outside the cfg lut_width_bits range
-            add_source(src.name, src.detail)
-            if src.allows_relative and lut_width is not None:
-                add_source(f'{src.name}+a', f'{src.detail}, relative')
-            continue
-        add_source(src.name, src.detail)
-        if src.allows_relative:
-            add_source(f'{src.name}+a', f'{src.detail}, relative')
-
+            # Relative LUT bits need a known width to be meaningful.
+            relative_ok = src.allows_relative and lut_width is not None
+        else:
+            relative_ok = src.allows_relative
+        items.append({'label': src.name, 'kind': 'variable', 'detail': src.detail})
+        if relative_ok:
+            items.append({'label': f'{src.name}+a', 'kind': 'variable', 'detail': f'{src.detail}, relative'})
     return items
+
+
+_MNEMONIC_SPELLINGS = frozenset(_keyword_spelling(t) for t in _MNEMONIC_TOKENS)
+
+
+def _completion_context(doc: ParsedDocument, line: int, character: int) -> tuple[str, str | None]:
+    """Classify what belongs at the cursor as ``(category, cfg_key)``.
+
+    Only the current line is examined, and only the part before the cursor:
+    completion must work while the line is still being typed (and may be
+    syntactically broken). A comma starts a fresh sub-instruction, and a
+    leading label definition is ignored.
+    """
+    lines = doc.source.split('\n')
+    if not 0 <= line < len(lines):
+        return 'none', None
+    text = lines[line][:character]
+    if '#' in text:  # inside a comment
+        return 'none', None
+
+    segment = text.rsplit(',', 1)[-1]
+    trailing_space = bool(segment) and segment[-1].isspace()
+    words = segment.split()
+    while words and words[0].endswith(':'):  # label definition before content
+        words = words[1:]
+    if not words:
+        return 'statement', None
+
+    first = words[0].lower()
+    count = len(words)
+    if first not in _MNEMONIC_SPELLINGS:
+        # An unrecognised first word is a mnemonic being typed.
+        return ('statement', None) if count == 1 else ('none', None)
+    if count == 1 and not trailing_space:
+        return 'statement', None  # still typing the mnemonic itself
+    if first == 'cfg':
+        # 'cfg ' -> keys; a partial key ('cfg pref') -> keys; a complete key
+        # ('cfg prefetch', with or without the following space) -> its values.
+        if count == 1:
+            return 'cfg_key', None
+        key = words[1].lower()
+        if count == 2 and not trailing_space:
+            return ('cfg_value', key) if key in CFG_VALUES else ('cfg_key', None)
+        return ('cfg_value', key) if key in CFG_VALUES else ('none', None)
+    if first in ('write', 'read'):
+        return 'width', None
+    if first == 'jmp':
+        return 'label', None
+    if first == 'set':
+        # outSpec is an output bit number (0..31); inSpec is a mux source.
+        if count == 1 or (count == 2 and not trailing_space):
+            return 'output', None
+        return 'source', None
+    if first in ('if', 'ifn'):
+        # condSource is a mux source; the second operand is a label.
+        if count == 1 or (count == 2 and not trailing_space):
+            return 'source', None
+        return 'label', None
+    if first in ('loopa', 'loopb'):
+        return ('label', None) if count >= 3 else ('none', None)
+    # lut / add / ldctd / ldcti / addcti / nop take numbers or no operand.
+    return 'none', None
+
+
+def completions_at(doc: ParsedDocument, line: int, character: int) -> list[dict]:
+    """Completion items appropriate for the cursor position in ``doc``.
+
+    Never offers every category at once: after ``cfg`` only cfg keys appear,
+    after a cfg key only its values, at a jump target only labels, and so on.
+    Source lists still honour the parsed ``cfg lut_width_bits``.
+    """
+    category, key = _completion_context(doc, line, character)
+    if category == 'statement':
+        return _mnemonic_items()
+    if category == 'cfg_key':
+        return _cfg_key_items()
+    if category == 'cfg_value':
+        return [{'label': value, 'kind': 'value', 'detail': 'cfg value'} for value in CFG_VALUES.get(key or '', ())]
+    if category == 'source':
+        return _source_items(doc.lut_width)
+    if category == 'output':
+        # Output bits occupy the mux slots below the IF/IFN condition slot.
+        return [{'label': str(bit), 'kind': 'value', 'detail': 'output bit'} for bit in range(COND_MUX_SLOT)]
+    if category == 'width':
+        return [{'label': str(int(width)), 'kind': 'value', 'detail': 'bit width'} for width in VALID_WIDTHS]
+    if category == 'label':
+        names = sorted({token.text[:-1] for token in doc.tokens if token.type == BitScramblerLexer.LABEL})
+        return [{'label': name, 'kind': 'function', 'detail': 'label'} for name in names]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -607,20 +677,25 @@ def on_references(ls: LanguageServer, params: types.ReferenceParams) -> list[typ
     return result
 
 
-@server.feature(types.TEXT_DOCUMENT_COMPLETION)
+@server.feature(
+    types.TEXT_DOCUMENT_COMPLETION,
+    types.CompletionOptions(trigger_characters=[' ']),
+)
 def completion(ls: LanguageServer, params: types.CompletionParams) -> types.CompletionList:
     kind_map = {
         'keyword': types.CompletionItemKind.Keyword,
         'value': types.CompletionItemKind.EnumMember,
         'variable': types.CompletionItemKind.Variable,
+        'function': types.CompletionItemKind.Function,
     }
     document = ls.workspace.get_text_document(params.text_document.uri)
-    lut_width = parse_document(document.source).lut_width
+    doc = parse_document(document.source)
+    items = completions_at(doc, params.position.line, params.position.character)
     return types.CompletionList(
         is_incomplete=False,
         items=[
             types.CompletionItem(label=item['label'], kind=kind_map[item['kind']], detail=item['detail'])
-            for item in completions(lut_width)
+            for item in items
         ],
     )
 

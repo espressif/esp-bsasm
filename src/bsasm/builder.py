@@ -10,32 +10,33 @@ label resolution). All interpretation lives in :mod:`bsasm.sema`.
 
 from dataclasses import dataclass
 
-from antlr4 import ParserRuleContext
-from antlr4 import TerminalNode
+from antlr4 import ParserRuleContext, TerminalNode
 
 from bsasm.errors import Location
 from bsasm.generated.BitScramblerLexer import BitScramblerLexer
 from bsasm.generated.BitScramblerParser import BitScramblerParser
 from bsasm.generated.BitScramblerVisitor import BitScramblerVisitor
-from bsasm.model import AddctiSub
-from bsasm.model import AddSub
-from bsasm.model import Atom
-from bsasm.model import BundleStmt
-from bsasm.model import CfgKey
-from bsasm.model import CfgStmt
-from bsasm.model import CounterSel
-from bsasm.model import Halves
-from bsasm.model import IfSub
-from bsasm.model import JmpSub
-from bsasm.model import LabelStmt
-from bsasm.model import LdctdSub
-from bsasm.model import LdctiSub
-from bsasm.model import LoopSub
-from bsasm.model import LutStmt
-from bsasm.model import NopSub
-from bsasm.model import SetSub
-from bsasm.model import Statement
-from bsasm.model import WidthSub
+from bsasm.model import (
+    AddctiSub,
+    AddSub,
+    Atom,
+    BundleStmt,
+    CfgKey,
+    CfgStmt,
+    CounterSel,
+    Halves,
+    IfSub,
+    JmpSub,
+    LabelStmt,
+    LdctdSub,
+    LdctiSub,
+    LoopSub,
+    LutStmt,
+    NopSub,
+    SetSub,
+    Statement,
+    WidthSub,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,31 +50,25 @@ class _Mnemonic:
 # Mnemonic token type -> counter and written-back halves. The H/L suffixes
 # select which bytes of the counter are written back; a bare mnemonic means
 # both (h=1, l=1), see the ADD/LDCTD/LDCTI/ADDCTI opcode tables in the TRM.
-_ADD_MNEMONICS: dict[int, _Mnemonic] = {
+_MNEMONICS: dict[int, _Mnemonic] = {
     BitScramblerLexer.ADDA: _Mnemonic(CounterSel.A, Halves.FULL),
     BitScramblerLexer.ADDAH: _Mnemonic(CounterSel.A, Halves.HIGH),
     BitScramblerLexer.ADDAL: _Mnemonic(CounterSel.A, Halves.LOW),
     BitScramblerLexer.ADDB: _Mnemonic(CounterSel.B, Halves.FULL),
     BitScramblerLexer.ADDBH: _Mnemonic(CounterSel.B, Halves.HIGH),
     BitScramblerLexer.ADDBL: _Mnemonic(CounterSel.B, Halves.LOW),
-}
-_LDCTD_MNEMONICS: dict[int, _Mnemonic] = {
     BitScramblerLexer.LDCTDA: _Mnemonic(CounterSel.A, Halves.FULL),
     BitScramblerLexer.LDCTDAH: _Mnemonic(CounterSel.A, Halves.HIGH),
     BitScramblerLexer.LDCTDAL: _Mnemonic(CounterSel.A, Halves.LOW),
     BitScramblerLexer.LDCTDB: _Mnemonic(CounterSel.B, Halves.FULL),
     BitScramblerLexer.LDCTDBH: _Mnemonic(CounterSel.B, Halves.HIGH),
     BitScramblerLexer.LDCTDBL: _Mnemonic(CounterSel.B, Halves.LOW),
-}
-_LDCTI_MNEMONICS: dict[int, _Mnemonic] = {
     BitScramblerLexer.LDCTIA: _Mnemonic(CounterSel.A, Halves.FULL),
     BitScramblerLexer.LDCTIAH: _Mnemonic(CounterSel.A, Halves.HIGH),
     BitScramblerLexer.LDCTIAL: _Mnemonic(CounterSel.A, Halves.LOW),
     BitScramblerLexer.LDCTIB: _Mnemonic(CounterSel.B, Halves.FULL),
     BitScramblerLexer.LDCTIBH: _Mnemonic(CounterSel.B, Halves.HIGH),
     BitScramblerLexer.LDCTIBL: _Mnemonic(CounterSel.B, Halves.LOW),
-}
-_ADDCTI_MNEMONICS: dict[int, _Mnemonic] = {
     BitScramblerLexer.ADDCTIA: _Mnemonic(CounterSel.A, Halves.FULL),
     BitScramblerLexer.ADDCTIAH: _Mnemonic(CounterSel.A, Halves.HIGH),
     BitScramblerLexer.ADDCTIAL: _Mnemonic(CounterSel.A, Halves.LOW),
@@ -180,7 +175,7 @@ class ProgramBuilder(BitScramblerVisitor):
 
     def visitSubAdd(self, ctx: BitScramblerParser.SubAddContext) -> AddSub:
         inst = ctx.addInstr()
-        mnemonic = _ADD_MNEMONICS[inst.addMnemonic().start.type]
+        mnemonic = _MNEMONICS[inst.addMnemonic().start.type]
         return AddSub(mnemonic.counter, mnemonic.halves, self._atom(inst.NUMBER()), _token_location(inst))
 
     def visitSubIf(self, ctx: BitScramblerParser.SubIfContext) -> IfSub:
@@ -194,17 +189,17 @@ class ProgramBuilder(BitScramblerVisitor):
 
     def visitSubLdctd(self, ctx: BitScramblerParser.SubLdctdContext) -> LdctdSub:
         inst = ctx.ldctdInstr()
-        mnemonic = _LDCTD_MNEMONICS[inst.ldctdMnemonic().start.type]
+        mnemonic = _MNEMONICS[inst.ldctdMnemonic().start.type]
         return LdctdSub(mnemonic.counter, mnemonic.halves, self._atom(inst.NUMBER()), _token_location(inst))
 
     def visitSubLdcti(self, ctx: BitScramblerParser.SubLdctiContext) -> LdctiSub:
         inst = ctx.ldctiInstr()
-        mnemonic = _LDCTI_MNEMONICS[inst.ldctiMnemonic().start.type]
+        mnemonic = _MNEMONICS[inst.ldctiMnemonic().start.type]
         return LdctiSub(mnemonic.counter, mnemonic.halves, _token_location(inst))
 
     def visitSubAddcti(self, ctx: BitScramblerParser.SubAddctiContext) -> AddctiSub:
         inst = ctx.addctiInstr()
-        mnemonic = _ADDCTI_MNEMONICS[inst.addctiMnemonic().start.type]
+        mnemonic = _MNEMONICS[inst.addctiMnemonic().start.type]
         return AddctiSub(mnemonic.counter, mnemonic.halves, _token_location(inst))
 
     def visitSubJmp(self, ctx: BitScramblerParser.SubJmpContext) -> JmpSub:

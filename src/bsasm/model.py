@@ -7,10 +7,8 @@ semantic analysis (:mod:`bsasm.sema`) produces and what the encoder
 (:mod:`bsasm.encoder`) consumes, so every stage can be tested in isolation.
 """
 
-from dataclasses import dataclass
-from dataclasses import field
-from enum import Enum
-from enum import IntEnum
+from dataclasses import dataclass, field
+from enum import Enum, IntEnum
 from typing import TypedDict
 
 from bsasm.errors import Location
@@ -293,6 +291,11 @@ class Opcode:
 # src field, not a CTL_MUX_SEL field, and is stored on Opcode.cond_source
 # rather than Instruction.mux.
 COND_MUX_SLOT = 32
+
+# Size of the hardware instruction RAM. Enforced during analysis so the
+# language server reports it too; the encoder keeps a defensive check for
+# Program objects built without going through analyze().
+MAX_INSTS = 8
 
 
 def mux_with_condition(mux: dict[int, MuxSource], op: Opcode | None) -> dict[int, MuxSource]:

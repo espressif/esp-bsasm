@@ -15,8 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from bsbin import assert_expected_subset
-from bsbin import unpack_binary
+from bsbin import assert_expected_subset, unpack_binary
 
 TESTCASES_DIR = Path(__file__).resolve().parent / 'testcases'
 SRC_DIR = TESTCASES_DIR.parent.parent / 'src'
@@ -60,6 +59,8 @@ def test_assemble_subprocess(tmp_path: Path) -> None:
     )
     captured = (result.stdout + result.stderr).strip()
     assert result.returncode == 0, f'subprocess assembler exited {result.returncode}\n{captured}'
+    # Sidecar decoding is covered by test_assemble[sanity]; here only the
+    # real-process boundary matters.
     assert outfile.is_file()
 
 
