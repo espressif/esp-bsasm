@@ -1,6 +1,6 @@
 # ESP BitScrambler Assembly — VS Code extension
 
-Syntax-aware editing for `.bsasm` files (ESP-IDF BitScrambler assembly): live diagnostics straight from the assembler's own parser, semantic highlighting derived from the grammar, document outline (labels), go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys.
+Syntax-aware editing for `.bsasm` files (ESP-IDF BitScrambler assembly): live diagnostics straight from the assembler's own parser, semantic highlighting derived from the grammar, document outline (labels), go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Keywords are case-insensitive (`CFG`, `Cfg`, `cfg` all work), and the original spelling is preserved in the editor.
 
 The extension is a thin client: all language intelligence lives in the `esp-bsasm` Python package, launched over stdio as `python -m bsasm.lsp`.
 

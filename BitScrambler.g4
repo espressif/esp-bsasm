@@ -39,8 +39,14 @@
 //   the `identifier` rule accepts every keyword token.
 // * Numbers keep an optional sign in the token so that '-0x10' is one
 //   integer (Python ``int(..., 0)``), not a stray '-' plus a hex word.
+// * Keywords and word-shaped tokens are case-insensitive. ANTLR folds case
+//   into the generated ATN at generation time, so the runtime needs no flag
+//   and token text keeps its original spelling. Semantics still calls
+//   .lower() where it compares names; that is independent of lexing.
 
 grammar BitScrambler;
+
+options { caseInsensitive = true; }
 
 // ---------------------------------------------------------------------------
 // Lexer
@@ -63,72 +69,72 @@ RANGE : '..' ;
 // 'cfg' statement keywords. Order matters only for equal-length matches:
 // every keyword must be defined before NAME so that 'cfg' wins over
 // NAME('cfg'), etc.
-CFG : C F G ;
-LUT : L U T ;
+CFG : 'cfg' ;
+LUT : 'lut' ;
 
-K_PREFETCH        : P R E F E T C H ;
-K_TRAILING_BYTES  : T R A I L I N G '_' B Y T E S ;
-K_EOF_ON          : E O F '_' O N ;
-K_LUT_WIDTH_BITS  : L U T '_' W I D T H '_' B I T S ;
-K_LOOP_ENDS_ON    : L O O P '_' E N D S '_' O N ;
-K_EQUAL           : E Q U A L ;
-K_EQUAL_OR_GREATER: E Q U A L '_' O R '_' G R E A T E R ;
-K_UPSTREAM        : U P S T R E A M ;
-K_DOWNSTREAM      : D O W N S T R E A M ;
-K_TRUE            : T R U E ;
-K_FALSE           : F A L S E ;
+K_PREFETCH        : 'prefetch' ;
+K_TRAILING_BYTES  : 'trailing_bytes' ;
+K_EOF_ON          : 'eof_on' ;
+K_LUT_WIDTH_BITS  : 'lut_width_bits' ;
+K_LOOP_ENDS_ON    : 'loop_ends_on' ;
+K_EQUAL           : 'equal' ;
+K_EQUAL_OR_GREATER: 'equal_or_greater' ;
+K_UPSTREAM        : 'upstream' ;
+K_DOWNSTREAM      : 'downstream' ;
+K_TRUE            : 'true' ;
+K_FALSE           : 'false' ;
 
 // Instruction mnemonics.
-SET   : S E T ;
-WRITE : W R I T E ;
-READ  : R E A D ;
+SET   : 'set' ;
+WRITE : 'write' ;
+READ  : 'read' ;
 
-LOOPA : L O O P A ;
-LOOPB : L O O P B ;
+LOOPA : 'loopa' ;
+LOOPB : 'loopb' ;
 
-ADDA : A D D A ;  ADDAH : A D D A H ;  ADDAL : A D D A L ;
-ADDB : A D D B ;  ADDBH : A D D B H ;  ADDBL : A D D B L ;
+ADDA : 'adda' ;  ADDAH : 'addah' ;  ADDAL : 'addal' ;
+ADDB : 'addb' ;  ADDBH : 'addbh' ;  ADDBL : 'addbl' ;
 
-IF  : I F ;
-IFN : I F N ;
+IF  : 'if' ;
+IFN : 'ifn' ;
 
-LDCTDA : L D C T D A ; LDCTDAH : L D C T D A H ; LDCTDAL : L D C T D A L ;
-LDCTDB : L D C T D B ; LDCTDBH : L D C T D B H ; LDCTDBL : L D C T D B L ;
+LDCTDA : 'ldctda' ; LDCTDAH : 'ldctdah' ; LDCTDAL : 'ldctdal' ;
+LDCTDB : 'ldctdb' ; LDCTDBH : 'ldctdbh' ; LDCTDBL : 'ldctdbl' ;
 
-LDCTIA : L D C T I A ; LDCTIAH : L D C T I A H ; LDCTIAL : L D C T I A L ;
-LDCTIB : L D C T I B ; LDCTIBH : L D C T I B H ; LDCTIBL : L D C T I B L ;
+LDCTIA : 'ldctia' ; LDCTIAH : 'ldctiah' ; LDCTIAL : 'ldctial' ;
+LDCTIB : 'ldctib' ; LDCTIBH : 'ldctibh' ; LDCTIBL : 'ldctibl' ;
 
-ADDCTIA : A D D C T I A ; ADDCTIAH : A D D C T I A H ; ADDCTIAL : A D D C T I A L ;
-ADDCTIB : A D D C T I B ; ADDCTIBH : A D D C T I B H ; ADDCTIBL : A D D C T I B L ;
+ADDCTIA : 'addctia' ; ADDCTIAH : 'addctiah' ; ADDCTIAL : 'addctial' ;
+ADDCTIB : 'addctib' ; ADDCTIBH : 'addctibh' ; ADDCTIBL : 'addctibl' ;
 
-JMP : J M P ;
-NOP : N O P ;
+JMP : 'jmp' ;
+NOP : 'nop' ;
 
 // Comparator source: (bl | bh | b) (<= | > | =) oN, all glued.
-// Covers e.g. 'bl<=o0', 'bh>o8', 'b=o16' and their upper-case spellings.
-AUX_CMP : [bB] ([lL] | [hH])? ('<=' | '>' | '=') [oO] [0-9]+ ;
+// Written lowercase; caseInsensitive covers 'BL<=O0', 'Bh>o8', etc.
+AUX_CMP : 'b' ('l' | 'h')? ('<=' | '>' | '=') 'o' [0-9]+ ;
 
 // A base operand glued to the '+a' relative-addressing suffix. The base may
 // be empty, which is how the original assembler reads a bare '+a' (input
 // register bit 32, relatively addressed).
-REL_OPERAND : NAMEPART* '+' [aA] ;
+REL_OPERAND : NAMEPART* '+' 'a' ;
 
 // A label definition, colon included. ANTLR prefers the longest match, so
 // 'loopa:' is one LABEL token instead of LOOPA followed by a stray colon.
-LABEL : [A-Za-z_] [A-Za-z0-9_]* ':' ;
+LABEL : [a-z_] [a-z0-9_]* ':' ;
 
 // Integers: Python-style literals (hex / octal / binary / decimal), optional
 // sign included in the token. ``int(text, 0)`` in the assembler recognises
 // the same prefixes.
-NUMBER : [-+]? '0' [xX] [0-9a-fA-F]+
-       | [-+]? '0' [oO] [0-7]+
-       | [-+]? '0' [bB] [01]+
+NUMBER : [-+]? '0' 'x' [0-9a-f]+
+       | [-+]? '0' 'o' [0-7]+
+       | [-+]? '0' 'b' [01]+
        | [-+]? [0-9]+
        ;
 
 // Anything else word-shaped: source bit names ('o0', 'a15', 'l31', 'l',
 // 'h'), label references and, via `identifier`, every keyword token.
-NAME : [A-Za-z_] [A-Za-z0-9_]* ;
+NAME : [a-z_] [a-z0-9_]* ;
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -244,15 +250,7 @@ identifier : NAME | CFG | LUT | SET | WRITE | READ | LOOPA | LOOPB
            ;
 
 // ---------------------------------------------------------------------------
-// Case-insensitive keyword fragments
+// Helpers
 // ---------------------------------------------------------------------------
 
-fragment A:[aA]; fragment B:[bB]; fragment C:[cC]; fragment D:[dD];
-fragment E:[eE]; fragment F:[fF]; fragment G:[gG]; fragment H:[hH];
-fragment I:[iI]; fragment J:[jJ]; fragment K:[kK]; fragment L:[lL];
-fragment M:[mM]; fragment N:[nN]; fragment O:[oO]; fragment P:[pP];
-fragment Q:[qQ]; fragment R:[rR]; fragment S:[sS]; fragment T:[tT];
-fragment U:[uU]; fragment V:[vV]; fragment W:[wW]; fragment X:[xX];
-fragment Y:[yY]; fragment Z:[zZ];
-
-fragment NAMEPART : [A-Za-z0-9_] ;
+fragment NAMEPART : [a-z0-9_] ;

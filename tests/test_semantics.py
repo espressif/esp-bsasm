@@ -17,6 +17,26 @@ from bsasm.lsp import parse_document
 
 TESTCASES_DIR = Path(__file__).resolve().parent / 'testcases'
 
+CASE_VARIANT_PROGRAMS = [
+    'CFG PREFETCH TRUE\nCFG LUT_WIDTH_BITS 8\nmain:\n    SET 0 O0, WRITE 8\n',
+    'Cfg Prefetch True\nCfg Lut_Width_Bits 8\nMaIn:\n    Set 0 o0, WrItE 8\n',
+    'cfg eof_on UPSTREAM\nmain:\n    LOOPA 10 1 main\n    AdDaH 5\nsecond:\n    JMP main\n',
+]
+
+
+@pytest.mark.parametrize('program', CASE_VARIANT_PROGRAMS)
+def test_keyword_casing_does_not_change_output(program: str, run_bsasm, tmp_path: Path) -> None:
+    def assemble(text: str, name: str) -> bytes:
+        source = tmp_path / f'{name}.bsasm'
+        source.write_text(text, encoding='utf-8')
+        outfile = tmp_path / f'{name}.bsbin'
+        run = run_bsasm([str(source), str(outfile)], cwd=tmp_path)
+        assert run.returncode == 0, run.stdout + run.stderr
+        return outfile.read_bytes()
+
+    assert assemble(program, 'variant') == assemble(program.lower(), 'lower')
+
+
 EQUIVALENT_SET_LINES = [
     ('set 0x10 5', 'set 16 5'),
     ('set 0b10 5', 'set 2 5'),

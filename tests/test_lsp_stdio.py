@@ -197,4 +197,52 @@ def test_stdio_server_round_trip(server: Server) -> None:
 
     symbols = server.request(4, 'textDocument/documentSymbol', {'textDocument': {'uri': URI}})
     assert isinstance(symbols, list)
+
+    # Jump-target navigation over the wire. Switch to a document with a label
+    # and a jump to it, then resolve the usage and list all references.
+    nav_source = 'main:\n    loopa 2 1 main\n'
+    server.notify(
+        'textDocument/didChange',
+        {'textDocument': {'uri': URI, 'version': 5}, 'contentChanges': [{'text': nav_source}]},
+    )
+    server.wait_diagnostics()
+
+    definition = server.request(
+        7, 'textDocument/definition', {'textDocument': {'uri': URI}, 'position': {'line': 1, 'character': 14}}
+    )
+    assert definition == [
+        {
+            'uri': URI,
+            'range': {
+                'start': {'line': 0, 'character': 0},
+                'end': {'line': 0, 'character': 4},
+            },
+        }
+    ]
+
+    references = server.request(
+        8,
+        'textDocument/references',
+        {
+            'textDocument': {'uri': URI},
+            'position': {'line': 0, 'character': 0},
+            'context': {'includeDeclaration': True},
+        },
+    )
+    assert references == [
+        {
+            'uri': URI,
+            'range': {
+                'start': {'line': 0, 'character': 0},
+                'end': {'line': 0, 'character': 4},
+            },
+        },
+        {
+            'uri': URI,
+            'range': {
+                'start': {'line': 1, 'character': 14},
+                'end': {'line': 1, 'character': 18},
+            },
+        },
+    ]
     assert_server_clean(server)
