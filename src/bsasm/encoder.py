@@ -15,42 +15,28 @@ byte from its most significant bit down.
 import struct
 
 from bsasm.errors import AssemblerError
-from bsasm.model import COND_MUX_SLOT
-from bsasm.model import CounterSel
-from bsasm.model import Halves
-from bsasm.model import Instruction
-from bsasm.model import LutWidth
-from bsasm.model import Opcode
-from bsasm.model import OpcodeKind
-from bsasm.model import Program
-from bsasm.model import mux_with_condition
-
-# If we have multiple BitScrambler versions, this'll indicate what hardware
-# we're expecting to run on. Increase BITSCRAMBLER_BINARY_VER if the on-disk
-# format ever changes incompatibly.
-BITSCRAMBLER_BINARY_VER = 1
-BITSCRAMBLER_HW_REV = 0
-
-HEADER_FMT = '<BBBBHBBHBB'
-HEADER_LEN_WORDS = 3
-INSTRUCTION_BITS = 257
-INSTRUCTION_PAD_BITS = 31  # pad to 36 bytes = 9 32-bit words
-MAX_INSTS = 8
-
-# Opcode base patterns (bits 16 upward), see the TRM opcode table.
-_OP_BASES = {
-    OpcodeKind.ADD: 0x0000000,
-    OpcodeKind.IF: 0x0010000,
-    OpcodeKind.IFN: 0x0020000,
-    OpcodeKind.LDCTD: 0x0030000,
-    OpcodeKind.LDCTI: 0x0040000,
-    OpcodeKind.ADDCTI: 0x0050000,
-    OpcodeKind.LOOP: 0x2000000,
-}
-
-
-# Mux inputs that the program never routes default to the fixed-low source.
-_DEFAULT_LOW_INPUT = 94  # the 'l' input
+from bsasm.isa import (
+    BITSCRAMBLER_BINARY_VER,
+    BITSCRAMBLER_HW_REV,
+    DEFAULT_LOW_INPUT,
+    HEADER_FMT,
+    HEADER_LEN_WORDS,
+    INSTRUCTION_BITS,
+    INSTRUCTION_PAD_BITS,
+    OPCODE_BASES,
+)
+from bsasm.model import (
+    COND_MUX_SLOT,
+    MAX_INSTS,
+    CounterSel,
+    Halves,
+    Instruction,
+    LutWidth,
+    Opcode,
+    OpcodeKind,
+    Program,
+    mux_with_condition,
+)
 
 
 class _BitWriter:
@@ -90,7 +76,9 @@ def encode(program: Program) -> bytes:
     """Serialize a fully analyzed program into .bsbin bytes."""
     insts = program.insts
     if len(insts) > MAX_INSTS:
-        raise AssemblerError('Program has more than eight instructions.')
+        # analyze() already rejects this; keep a guard for Program objects
+        # assembled by hand rather than through analyze().
+        raise AssemblerError(f'Program has more than {MAX_INSTS} instructions.')
 
     out = bytearray()
     lut_words = reformat_lut(program.lut, program.meta.lut_width)
@@ -155,7 +143,7 @@ def _encode_inst(inst: Instruction) -> bytes:
         if i not in mux:
             if i < COND_MUX_SLOT:
                 # Unrouted mux inputs select the fixed-low source.
-                bits.add_bits(_DEFAULT_LOW_INPUT, 7)
+                bits.add_bits(DEFAULT_LOW_INPUT, 7)
             continue
         src = mux[i]
         if src.rel_addr is not None:
@@ -169,7 +157,7 @@ def _encode_inst(inst: Instruction) -> bytes:
 
     # Opcode field, 26 bits: bit 25 LOOP flag, 24 counter, 23/22 halves,
     # 21..23 target, 16..20 sub-opcode, 0..15 immediate / 0..6 IF source.
-    opcode = _OP_BASES[op.kind]
+    opcode = OPCODE_BASES[op.kind]
     if op.counter is CounterSel.B:
         opcode |= 1 << 24
     if op.halves is not None and op.halves != Halves.LOW:

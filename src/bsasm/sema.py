@@ -10,65 +10,59 @@ assembler's four passes; the differences are deliberate and documented in
 the repository README.md.
 """
 
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
-from bsasm.errors import AssemblerSyntaxError
-from bsasm.errors import Location
-from bsasm.model import COND_MUX_SLOT
-from bsasm.model import AddctiSub
-from bsasm.model import AddSub
-from bsasm.model import Atom
-from bsasm.model import BundleStmt
-from bsasm.model import CfgKey
-from bsasm.model import CfgStmt
-from bsasm.model import Chipcfg
-from bsasm.model import CounterSel
-from bsasm.model import EofSide
-from bsasm.model import Halves
-from bsasm.model import IfSub
-from bsasm.model import Instruction
-from bsasm.model import JmpSub
-from bsasm.model import LabelStmt
-from bsasm.model import LdctdSub
-from bsasm.model import LdctiSub
-from bsasm.model import LoopEndsOn
-from bsasm.model import LoopSub
-from bsasm.model import LutStmt
-from bsasm.model import LutWidth
-from bsasm.model import MuxSource
-from bsasm.model import NopSub
-from bsasm.model import Opcode
-from bsasm.model import OpcodeKind
-from bsasm.model import Program
-from bsasm.model import ProgramMeta
-from bsasm.model import SetSub
-from bsasm.model import Statement
-from bsasm.model import SubInstr
-from bsasm.model import Width
-from bsasm.model import WidthSub
-from bsasm.model import check_sources_compatible
-from bsasm.model import mux_with_condition
-
-# The mux input names, in CTL_MUX_SEL value order (see the TRM mux source
-# table). The 32 empty strings are the 32..63 region, which is multiplexed
-# between reg_mem1, the counters and the LUT output by ctrsel/lutsel: a bare
-# '+a' operand parses to the empty name and lands on input 32, exactly as in
-# the original assembler.
-# fmt: off
-_INPUTS = (
-    *tuple(str(i) for i in range(32)),   # 0..31: input FIFO register (reg_mem0)
-    *([''] * 32),                        # 32..63: multiplexed region
-    'bl<=o0', 'bl>o0', 'bl=o0', 'bl<=o8', 'bl>o8', 'bl=o8', 'bl<=o16', 'bl>o16',
-    'bl=o16', 'bl<=o24', 'bl>o24', 'bl=o24', 'bh<=o0', 'bh>o0', 'bh=o0', 'bh<=o8',
-    'bh>o8', 'bh=o8', 'bh<=o16', 'bh>o16', 'bh=o16', 'bh<=o24', 'bh>o24', 'bh=o24',
-    'b<=o0', 'b>o0', 'b=o0', 'b<=o16', 'b>o16', 'b=o16', 'l', 'h',   # 64..95: comparators + fixed 0/1
-    *tuple(f'o{i}' for i in range(32)),  # 96..127: previous output register
+from bsasm.errors import AssemblerError, AssemblerSyntaxError, Location
+from bsasm.isa import (
+    DEFAULT_CHIPCFG,
+    INPUT_LUT_BITS,
+    INPUTS,
+    INPUTS_CTRSEL_CLR,
+    INPUTS_CTRSEL_SET,
+    LOOP_ENDS_ON_VALUES,
+    LUT_MINMAX,
+    LUT_STARTS,
+    LUT_WIDTH_VALUES,
+    PREFETCH_VALUES,
+    TRAILING_BYTES_MAX,
+    VALID_WIDTHS,
 )
-_INPUTS_CTRSEL_SET = tuple(f'a{i}' for i in range(16)) + tuple(f'b{i}' for i in range(16))
-_INPUTS_CTRSEL_CLR = tuple(str(i) for i in range(32, 64))
-_INPUT_LUT_BITS = tuple(f'l{i}' for i in range(32))
-# fmt: on
+from bsasm.model import (
+    COND_MUX_SLOT,
+    MAX_INSTS,
+    AddctiSub,
+    AddSub,
+    Atom,
+    BundleStmt,
+    CfgKey,
+    CfgStmt,
+    Chipcfg,
+    CounterSel,
+    EofSide,
+    Halves,
+    IfSub,
+    Instruction,
+    JmpSub,
+    LabelStmt,
+    LdctdSub,
+    LdctiSub,
+    LoopSub,
+    LutStmt,
+    LutWidth,
+    MuxSource,
+    NopSub,
+    Opcode,
+    OpcodeKind,
+    Program,
+    ProgramMeta,
+    SetSub,
+    Statement,
+    SubInstr,
+    Width,
+    WidthSub,
+    check_sources_compatible,
+    mux_with_condition,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,21 +78,21 @@ class SourceSpelling:
 def source_spellings() -> list[SourceSpelling]:
     """Every valid mux-source spelling, derived from the :func:`_parse_input` tables.
 
-    Empty names (the multiplexed-region placeholder in ``_INPUTS[32:64]``)
+    Empty names (the multiplexed-region placeholder in ``INPUTS[32:64]``)
     are omitted. ``allows_relative`` follows the same ``index < 64`` rule as
     :func:`_parse_input`. LUT-bit filtering by ``cfg lut_width_bits`` stays
     with the caller, which uses :attr:`SourceSpelling.lut_index`.
     """
     items = [
-        *[SourceSpelling(name, 'input FIFO bit', True) for name in _INPUTS[:32]],
+        *[SourceSpelling(name, 'input FIFO bit', True) for name in INPUTS[:32]],
         *[
             SourceSpelling(name, 'counter a bit' if name.startswith('a') else 'counter b bit', True)
-            for name in _INPUTS_CTRSEL_SET
+            for name in INPUTS_CTRSEL_SET
         ],
-        *[SourceSpelling(name, 'reg_mem1 bit', True) for name in _INPUTS_CTRSEL_CLR],
-        *[SourceSpelling(name, 'LUT bit', True, lut_index=i) for i, name in enumerate(_INPUT_LUT_BITS)],
+        *[SourceSpelling(name, 'reg_mem1 bit', True) for name in INPUTS_CTRSEL_CLR],
+        *[SourceSpelling(name, 'LUT bit', True, lut_index=i) for i, name in enumerate(INPUT_LUT_BITS)],
     ]
-    for index, name in enumerate(_INPUTS[64:], start=64):
+    for index, name in enumerate(INPUTS[64:], start=64):
         if index < 94:
             detail = 'comparator'
         elif index == 94:
@@ -111,49 +105,35 @@ def source_spellings() -> list[SourceSpelling]:
     return items
 
 
-# Where in the multiplexed region the LUT outputs live, per LUT width.
-_LUT_STARTS = {LutWidth.BITS8: 24, LutWidth.BITS16: 16, LutWidth.BITS32: 0}
+def analyze(statements: list[Statement], chipcfg: Chipcfg | None = None) -> tuple[Program, list[AssemblerError]]:
+    """Run the five semantic passes, collecting every error.
 
-# Allowed value spellings and ranges, as in the original assembler's
-# meta_inst_defs. 'cfg' value spellings are matched as strings, so '08' is
-# rejected just like before.
-_PREFETCH_VALUES = {'true': True, 'false': False, '1': True, '0': False}
-_LUT_WIDTH_VALUES = {'8': LutWidth.BITS8, '16': LutWidth.BITS16, '32': LutWidth.BITS32}
-_LOOP_ENDS_ON_VALUES = {'equal': LoopEndsOn.EQUAL, 'equal_or_greater': LoopEndsOn.EQUAL_OR_GREATER}
-
-# Range of a single LUT value, per LUT width. (The 16-bit maximum was
-# 65537 in the original assembler, letting 65536/65537 wrap around to 0/1.)
-_LUT_MINMAX = {
-    LutWidth.BITS8: (-128, 255),
-    LutWidth.BITS16: (-32768, 65535),
-    LutWidth.BITS32: (-2147483648, 4294967295),
-}
-
-# 'trailing_bytes' is stored in the header as trailing *bits* in a 16-bit
-# field, so 8191 bytes (65528 bits) is the largest value that fits. (The
-# original accepted 8192 and crashed inside struct.pack.)
-_TRAILING_BYTES_MAX = 8191
-
-_VALID_WIDTHS = (Width.ZERO, Width.EIGHT, Width.SIXTEEN, Width.THIRTYTWO)
-
-DEFAULT_CHIPCFG: Chipcfg = {'chipname': 'chip', 'extra_instruction_groups': [], 'support_all': True}
-
-
-def analyze(statements: list[Statement], chipcfg: Chipcfg | None = None) -> Program:
-    """Run the five semantic passes and produce a :class:`Program`."""
+    The returned :class:`Program` is only safe to encode when ``errors`` is
+    empty.
+    """
     cfg = DEFAULT_CHIPCFG if chipcfg is None else chipcfg
-    labels = _collect_labels(statements)
-    meta = _collect_cfg(statements)
-    lut = _collect_lut(statements, meta.lut_width)
-    insts = _build_insts(statements, cfg, labels, meta.lut_width)
-    _check_jump_targets(statements, labels, len(insts))
-    return Program(meta=meta, insts=tuple(insts), lut=tuple(lut), labels=labels)
+    errors: list[AssemblerError] = []
+    labels = _collect_labels(statements, errors)
+    meta = _collect_cfg(statements, errors)
+    lut = _collect_lut(statements, meta.lut_width, errors)
+    insts = _build_insts(statements, cfg, labels, meta.lut_width, errors)
+    # Count bundles, not successfully-built insts: labels are indexed by bundle,
+    # so a bundle that failed to build must not shift the instruction count used
+    # for the hardware limit and the jump-target bounds.
+    bundles = [st for st in statements if isinstance(st, BundleStmt)]
+    inst_ct = len(bundles)
+    if inst_ct > MAX_INSTS:
+        errors.append(
+            AssemblerSyntaxError(bundles[MAX_INSTS].location, f'Program has more than {MAX_INSTS} instructions.')
+        )
+    _check_jump_targets(statements, labels, inst_ct, errors)
+    return Program(meta=meta, insts=tuple(insts), lut=tuple(lut), labels=labels), errors
 
 
 # Pass 1: labels ------------------------------------------------------------
 
 
-def _collect_labels(statements: list[Statement]) -> dict[str, int]:
+def _collect_labels(statements: list[Statement], errors: list[AssemblerError]) -> dict[str, int]:
     """Record the instruction index every label points at.
 
     Labels are matched case-insensitively, matching the rest of the
@@ -169,7 +149,8 @@ def _collect_labels(statements: list[Statement]) -> dict[str, int]:
         if isinstance(st, LabelStmt):
             key = st.name.lower()
             if key in defined:
-                raise AssemblerSyntaxError(st.location, f"'{st.name}' is already defined here", defined[key])
+                errors.append(AssemblerSyntaxError(st.location, f"'{st.name}' is already defined here", defined[key]))
+                continue  # keep the first definition; later references still resolve
             labels[key] = ip
             defined[key] = st.location
         elif isinstance(st, BundleStmt):
@@ -187,7 +168,7 @@ def _resolve_label(atom: Atom, labels: dict[str, int]) -> int:
 # Pass 2: cfg ---------------------------------------------------------------
 
 
-def _collect_cfg(statements: list[Statement]) -> ProgramMeta:
+def _collect_cfg(statements: list[Statement], errors: list[AssemblerError]) -> ProgramMeta:
     """Apply all 'cfg' statements in document order (the last one wins)."""
     meta = ProgramMeta()
     for st in statements:
@@ -196,35 +177,53 @@ def _collect_cfg(statements: list[Statement]) -> ProgramMeta:
         text = st.value.text.lower()
         match st.key:
             case CfgKey.PREFETCH:
-                if text not in _PREFETCH_VALUES:
-                    raise AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for prefetch')
-                meta = replace(meta, prefetch=_PREFETCH_VALUES[text])
+                if text not in PREFETCH_VALUES:
+                    errors.append(
+                        AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for prefetch')
+                    )
+                    continue
+                meta = replace(meta, prefetch=PREFETCH_VALUES[text])
             case CfgKey.TRAILING_BYTES:
-                meta = replace(meta, trailing_bytes=_parse_val(st.value, 0, _TRAILING_BYTES_MAX))
+                try:
+                    trailing = _parse_val(st.value, 0, TRAILING_BYTES_MAX)
+                except AssemblerError as e:
+                    errors.append(e)
+                    continue
+                meta = replace(meta, trailing_bytes=trailing)
             case CfgKey.EOF_ON:
                 # The grammar only lets UPSTREAM/DOWNSTREAM through.
                 meta = replace(meta, eof_on=EofSide[text.upper()])
             case CfgKey.LUT_WIDTH_BITS:
-                if text not in _LUT_WIDTH_VALUES:
-                    raise AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for lut_width_bits')
-                meta = replace(meta, lut_width=_LUT_WIDTH_VALUES[text])
+                if text not in LUT_WIDTH_VALUES:
+                    errors.append(
+                        AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for lut_width_bits')
+                    )
+                    continue
+                meta = replace(meta, lut_width=LUT_WIDTH_VALUES[text])
             case CfgKey.LOOP_ENDS_ON:
-                if text not in _LOOP_ENDS_ON_VALUES:
-                    raise AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for loop_ends_on')
-                meta = replace(meta, loop_ends_on=_LOOP_ENDS_ON_VALUES[text])
+                if text not in LOOP_ENDS_ON_VALUES:
+                    errors.append(
+                        AssemblerSyntaxError(st.value.location, f'{text} is not an allowed value for loop_ends_on')
+                    )
+                    continue
+                meta = replace(meta, loop_ends_on=LOOP_ENDS_ON_VALUES[text])
     return meta
 
 
 # Pass 3: LUT ----------------------------------------------------------------
 
 
-def _collect_lut(statements: list[Statement], lut_width: LutWidth) -> list[int]:
+def _collect_lut(statements: list[Statement], lut_width: LutWidth, errors: list[AssemblerError]) -> list[int]:
     """Collect all LUT values, validated against the final LUT width."""
-    minimum, maximum = _LUT_MINMAX[lut_width]
+    minimum, maximum = LUT_MINMAX[lut_width]
     values: list[int] = []
     for st in statements:
         if isinstance(st, LutStmt):
-            values.extend(_parse_val(atom, minimum, maximum) for atom in st.values)
+            for atom in st.values:
+                try:
+                    values.append(_parse_val(atom, minimum, maximum))
+                except AssemblerError as e:
+                    errors.append(e)
     return values
 
 
@@ -271,31 +270,31 @@ def _parse_input(atom: Atom, lut_width: LutWidth) -> MuxSource:
 
     ctrsel: int | None = None
     lutsel: int | None = None
-    if text in _INPUTS:
+    if text in INPUTS:
         # Always accessible regardless of ctrsel/lutsel; '' lands on the
         # first entry of the multiplexed region, i.e. input 32.
-        index = _INPUTS.index(text)
-    elif text in _INPUTS_CTRSEL_SET:
-        i = _INPUTS_CTRSEL_SET.index(text)
+        index = INPUTS.index(text)
+    elif text in INPUTS_CTRSEL_SET:
+        i = INPUTS_CTRSEL_SET.index(text)
         index = i + 32
         ctrsel = 1
-        if i >= _LUT_STARTS[lut_width]:
+        if i >= LUT_STARTS[lut_width]:
             lutsel = 0
-    elif text in _INPUTS_CTRSEL_CLR:
-        i = _INPUTS_CTRSEL_CLR.index(text)
+    elif text in INPUTS_CTRSEL_CLR:
+        i = INPUTS_CTRSEL_CLR.index(text)
         index = i + 32
         ctrsel = 0
-        if i >= _LUT_STARTS[lut_width]:
+        if i >= LUT_STARTS[lut_width]:
             # These overlap the LUT; lutsel cannot be 1 while they are used.
             lutsel = 0
-    elif text in _INPUT_LUT_BITS:
-        i = _INPUT_LUT_BITS.index(text)
+    elif text in INPUT_LUT_BITS:
+        i = INPUT_LUT_BITS.index(text)
         if i >= int(lut_width):
             raise AssemblerSyntaxError(
                 atom.location,
                 f'LUT input {text} referenced, but LUT is configured to be only {int(lut_width)} bits wide.',
             )
-        index = i + 32 + _LUT_STARTS[lut_width]
+        index = i + 32 + LUT_STARTS[lut_width]
         lutsel = 1
     elif _looks_like_number(text):
         # ``set 0 0x10`` is FIFO bit 16. Re-enter with the decimal spelling
@@ -419,19 +418,28 @@ def _build_insts(
     chipcfg: Chipcfg,
     labels: dict[str, int],
     lut_width: LutWidth,
+    errors: list[AssemblerError],
 ) -> list[Instruction]:
     insts: list[Instruction] = []
     for st in statements:
         if not isinstance(st, BundleStmt):
             continue
-        insts.append(_build_inst(st, chipcfg, labels, lut_width))
+        try:
+            insts.append(_build_inst(st, chipcfg, labels, lut_width))
+        except AssemblerError as e:
+            errors.append(e)
     return insts
 
 
 # Pass 5: jump targets --------------------------------------------------------
 
 
-def _check_jump_targets(statements: list[Statement], labels: dict[str, int], inst_ct: int) -> None:
+def _check_jump_targets(
+    statements: list[Statement],
+    labels: dict[str, int],
+    inst_ct: int,
+    errors: list[AssemblerError],
+) -> None:
     """Reject jumps to labels that point past the last instruction.
 
     The original assembler silently encoded such targets: with a full eight
@@ -447,11 +455,15 @@ def _check_jump_targets(statements: list[Statement], labels: dict[str, int], ins
             if not isinstance(sub, LoopSub | IfSub | JmpSub):
                 continue
             name = sub.target.text.lower()
-            ip = labels[name]
+            ip = labels.get(name)
+            if ip is None:
+                continue  # _build_inst already reported the missing label
             if ip >= inst_ct:
-                raise AssemblerSyntaxError(
-                    sub.target.location,
-                    f"jump target '{name}' points past the end of the program ({inst_ct} instructions)",
+                errors.append(
+                    AssemblerSyntaxError(
+                        sub.target.location,
+                        f"jump target '{name}' points past the end of the program ({inst_ct} instructions)",
+                    )
                 )
 
 
@@ -542,7 +554,7 @@ class _InstBuilder:
 
     def _add_width(self, sub: WidthSub) -> None:
         value = _parse_val(sub.width, 0, 32)
-        if value not in _VALID_WIDTHS:
+        if value not in VALID_WIDTHS:
             noun = 'read' if sub.is_read else 'write'
             raise AssemblerSyntaxError(sub.location, f'{value} is not a valid amount of bits to {noun}')
         if sub.is_read:

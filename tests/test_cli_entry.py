@@ -6,7 +6,48 @@ Error paths must exit 2 with the assembler's own message, never a traceback.
 Default output naming is a suffix swap, not a global '.bsasm' string replace.
 """
 
+import io
+import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+
+from bsasm.cli import run
+
+
+def invoke_run(argv: list[str]) -> tuple[int | None, str, str]:
+    """Call the console-script boundary directly, capturing its exit status."""
+    stdout, stderr = io.StringIO(), io.StringIO()
+    old_argv = sys.argv
+    sys.argv = argv
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            try:
+                code: int | None = run()
+            except SystemExit as exc:
+                # SystemExit.code is int | str | None; a str never comes from
+                # log.die, so normalize it to a plain failure code.
+                code = 1 if isinstance(exc.code, str) else exc.code
+    finally:
+        sys.argv = old_argv
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+def test_console_entry_reports_tool_errors_with_exit_2(tmp_path) -> None:
+    bad = tmp_path / 'bad.bsasm'
+    bad.write_text('bogus_op\n', encoding='utf-8')
+    code, out, err = invoke_run(['bsasm', str(bad)])
+    assert code == 2
+    combined = out + err
+    assert 'Traceback' not in combined
+    assert 'line 1' in combined  # the assembler's own diagnostic
+
+
+def test_console_entry_success_exits_zero(tmp_path) -> None:
+    good = tmp_path / 'ok.bsasm'
+    good.write_text('main:\n    write 8\n', encoding='utf-8')
+    code, out, _ = invoke_run(['bsasm', str(good)])
+    assert code == 0
+    assert 'Written' in out
 
 
 def test_unwritable_output_reports_clean_error(run_bsasm, tmp_path: Path) -> None:

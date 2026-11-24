@@ -28,6 +28,14 @@ class AssemblerError(FatalError):
     """Base class for every diagnostic the assembler reports."""
 
 
+class AssemblerErrors(AssemblerError):
+    """Several diagnostics from one source, printed one per line by the CLI."""
+
+    def __init__(self, errors: list[AssemblerError]) -> None:
+        self.errors = errors
+        super().__init__('\n'.join(str(error) for error in errors))
+
+
 class AssemblerSyntaxError(AssemblerError):
     """Raised for lexical, syntactic and semantic problems in the source.
 

@@ -105,7 +105,6 @@ fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.isort]
-force-single-line = true
 known-first-party = ["bsasm"]
 known-local-folder = ["bsbin"]
 

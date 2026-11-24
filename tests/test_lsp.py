@@ -2,14 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the language-server logic (pure functions, no LSP transport)."""
 
-from bsasm.lsp import completions
-from bsasm.lsp import definition
-from bsasm.lsp import hover
-from bsasm.lsp import parse_document
-from bsasm.lsp import references
-from bsasm.lsp import semantic_tokens
-from bsasm.lsp import symbols
-from bsasm.model import LutWidth
+import pytest
+
+from bsasm.lsp import completions_at, definition, hover, parse_document, references, semantic_tokens, symbols
 
 PROGRAM = """# comment line
 main:
@@ -86,6 +81,25 @@ def test_undefined_jump_target_is_reported() -> None:
     assert 'Label not found' in diag.message
 
 
+def test_all_semantic_errors_are_reported() -> None:
+    # Every entry point reports the full set; this checks the editor path.
+    src = 'cfg prefetch 2\ncfg lut_width_bits 7\ncfg trailing_bytes 99999\nmain:\n    write 12\n    read 7\n'
+    messages = [d.message for d in parse_document(src).diagnostics]
+    assert len(messages) == 5
+    assert any('allowed value for prefetch' in m for m in messages)
+    assert any('allowed value for lut_width_bits' in m for m in messages)
+    assert any('out of range' in m for m in messages)
+    assert any('bits to write' in m for m in messages)
+    assert any('bits to read' in m for m in messages)
+
+
+def test_all_invalid_lut_values_are_reported() -> None:
+    # One bad value must not hide the others in the same LUT statement.
+    doc = parse_document('cfg lut_width_bits 8\nlut 300, -200, 7\n')
+    assert len(doc.diagnostics) == 2
+    assert all('out of range' in d.message for d in doc.diagnostics)
+
+
 def test_duplicate_label_is_reported() -> None:
     doc = parse_document('main:\nmain:\n    write 8\n')
     assert any('already defined' in d.message for d in doc.diagnostics)
@@ -99,6 +113,35 @@ def test_mux_conflict_is_reported_at_analysis_time() -> None:
     assert 'Cannot have both counters/LUT' in diag.message
     assert diag.related is not None
     assert diag.related.line == 2
+
+
+def test_too_many_instructions_is_reported() -> None:
+    # The encoder used to be the only place that checked the 8-instruction
+    # hardware limit; the editor showed no diagnostic for a 9-instruction file.
+    doc = parse_document('nop\n' * 9)
+    assert len(doc.diagnostics) == 1
+    assert 'more than 8 instructions' in doc.diagnostics[0].message
+    assert doc.diagnostics[0].location.line == 9
+
+
+def test_failed_bundle_does_not_shift_jump_bounds() -> None:
+    # 'write 12' fails to build, but it still occupies a bundle slot. The jump
+    # to 'target' (bundle 2) must not be judged against the 2 successfully-built
+    # insts, which would spuriously report it as pointing past the end.
+    src = 'main:\n    write 12\n    nop\ntarget:\n    jmp target\n'
+    messages = [d.message for d in parse_document(src).diagnostics]
+    assert len(messages) == 1
+    assert 'bits to write' in messages[0]
+    assert not any('past the end' in m for m in messages)
+
+
+def test_hardware_limit_counts_bundles_not_built_insts() -> None:
+    # Nine bundles even though one fails to build: the limit is about what the
+    # user wrote, so it must still fire alongside the bad-width error.
+    src = 'write 12\n' + 'nop\n' * 8
+    messages = [d.message for d in parse_document(src).diagnostics]
+    assert any('bits to write' in m for m in messages)
+    assert any('more than 8 instructions' in m for m in messages)
 
 
 def test_expected_token_collapse_names_identifiers() -> None:
@@ -128,31 +171,144 @@ def test_hover_covers_cfg_keys() -> None:
     assert 'extra bytes' in hover_text
 
 
+def test_spans_are_positional() -> None:
+    spans = semantic_tokens(PROGRAM)
+    # 0-based positions, non-negative, ordered by (line, column).
+    assert spans == sorted(spans)
+    assert all(line >= 0 and col >= 0 and length > 0 for line, col, length, _ in spans)
+
+
+def test_syntax_error_is_collected_with_location() -> None:
+    doc = parse_document('nop, \nnonsense !!\n')
+    assert doc.diagnostics
+    first = doc.diagnostics[0]
+    assert first.location.line >= 1  # one-based, matching the CLI
+    assert first.message
+
+
 def test_hover_returns_none_outside_keywords() -> None:
     assert hover(PROGRAM, 1, 2) is None  # label definition
     assert hover(PROGRAM, 2, 26) is None  # number
     assert hover(PROGRAM, 2, 7) is None  # whitespace between tokens
 
 
-def test_completion_groups() -> None:
-    labels = {item['label'] for item in completions()}
-    assert {'set', 'loopa', 'ldctibh', 'jmp', 'nop', 'cfg'} <= labels
-    assert {'a15', 'b0', 'o31', 'l7', 'l', 'h', 'b<=o0'} <= labels
+def test_cfg_value_table_matches_grammar_keys() -> None:
+    # A new cfg key in the grammar must also get an entry here, or its value
+    # position silently stops completing.
+    from bsasm.isa import CFG_VALUES
+    from bsasm.lsp import _CFG_KEY_TOKENS, _keyword_spelling
+
+    assert set(CFG_VALUES) == {_keyword_spelling(token) for token in _CFG_KEY_TOKENS}
+
+
+def test_completion_after_cfg_offers_only_cfg_keys() -> None:
+    doc = parse_document('cfg \nmain:\n    nop\n')
+    labels = {item['label'] for item in completions_at(doc, 0, 4)}
+    assert labels == {'prefetch', 'trailing_bytes', 'eof_on', 'lut_width_bits', 'loop_ends_on'}
+    assert 'loopa' not in labels  # the regression: cfg used to offer every mnemonic
+    assert 'upstream' not in labels  # values belong to the next position
+
+
+@pytest.mark.parametrize(
+    'key,expected',
+    [
+        ('prefetch', {'true', 'false', '1', '0'}),
+        ('eof_on', {'upstream', 'downstream'}),
+        ('lut_width_bits', {'8', '16', '32'}),
+        ('loop_ends_on', {'equal', 'equal_or_greater'}),
+        ('trailing_bytes', set()),  # arbitrary integer, nothing enumerable
+    ],
+)
+def test_completion_after_cfg_key_offers_only_its_values(key: str, expected: set[str]) -> None:
+    line = f'cfg {key} '
+    doc = parse_document(line + '\n')
+    assert {item['label'] for item in completions_at(doc, 0, len(line))} == expected
+
+
+@pytest.mark.parametrize(
+    'line,column,expected,absent',
+    [
+        ('cfg pref\n', 9, {'prefetch'}, {'true'}),  # still typing a key
+        ('cfg prefetch\n', 12, {'true', 'false', '1', '0'}, {'prefetch'}),  # full key, no space yet
+    ],
+)
+def test_completion_without_trailing_space(line: str, column: int, expected: set[str], absent: set[str]) -> None:
+    doc = parse_document(line)
+    labels = {item['label'] for item in completions_at(doc, 0, column)}
+    assert expected <= labels
+    assert not absent & labels
+
+
+def test_completion_at_line_start_offers_mnemonics_only() -> None:
+    doc = parse_document('main:\n    nop\n')
+    labels = {item['label'] for item in completions_at(doc, 1, 4)}
+    assert {'loopa', 'cfg', 'set', 'write'} <= labels
+    assert 'a0' not in labels
+    assert 'upstream' not in labels
+
+
+def test_completion_after_set_offers_output_bits() -> None:
+    # The first 'set' operand is an output bit number (0..31), not a mux source.
+    doc = parse_document('main:\n    set \n')
+    labels = {item['label'] for item in completions_at(doc, 1, 8)}
+    assert labels == {str(bit) for bit in range(32)}
+    assert 'a0' not in labels
+    assert 'h' not in labels
+    assert 'l0' not in labels
+
+
+def test_completion_after_set_offers_sources() -> None:
+    doc = parse_document('main:\n    set 0 \n')
+    labels = {item['label'] for item in completions_at(doc, 1, 10)}
+    assert {'0', '31', 'l0', 'h', 'a0', 'b<=o0', '0+a'} <= labels
     # reg_mem1 high bits and the relative spellings were missing before.
-    assert {'32', '63', '0+a', 'a0+a', 'b15+a', '32+a'} <= labels
+    assert {'32', '63', 'a0+a', 'b15+a', '32+a'} <= labels
+    assert 'loopa' not in labels
 
 
-def test_lut_bit_completions_follow_cfg_width() -> None:
-    all_labels = {item['label'] for item in completions()}
-    assert 'l31' in all_labels
-    assert 'l31+a' not in all_labels  # unknown width: no relative LUT bits
+def test_completion_sources_follow_cfg_lut_width() -> None:
+    # At the input-operand position (after 'set 0 ') the parsed lut_width is
+    # available even though the cursor is mid-line, so LUT bits filter exactly.
+    eight = parse_document('cfg lut_width_bits 8\nmain:\n    set 0 1\n')
+    labels8 = {item['label'] for item in completions_at(eight, 2, 10)}
+    assert {'l7', 'l7+a'} <= labels8
+    assert not {'l8', 'l8+a'} & labels8
 
-    eight = {item['label'] for item in completions(LutWidth.BITS8)}
-    assert 'l7' in eight
-    assert 'l7+a' in eight
-    assert 'l8' not in eight
-    assert 'l8+a' not in eight
+    full = parse_document('cfg lut_width_bits 32\nmain:\n    set 0 1\n')
+    labels32 = {item['label'] for item in completions_at(full, 2, 10)}
+    assert {'l31', 'l31+a'} <= labels32
 
-    thirtytwo = {item['label'] for item in completions(LutWidth.BITS32)}
-    assert 'l31' in thirtytwo
-    assert 'l31+a' in thirtytwo
+
+@pytest.mark.parametrize(
+    'source,line,column,expected',
+    [
+        ('main:\n    nop\nother:\n    jmp \n', 3, 8, {'main', 'other'}),
+        ('main:\n    if h \n', 1, 9, {'main'}),
+    ],
+)
+def test_completion_at_label_position_offers_labels(source: str, line: int, column: int, expected: set[str]) -> None:
+    doc = parse_document(source)
+    assert {item['label'] for item in completions_at(doc, line, column)} == expected
+
+
+def test_completion_after_if_offers_sources() -> None:
+    doc = parse_document('main:\n    if \n')
+    assert 'h' in {item['label'] for item in completions_at(doc, 1, 8)}
+
+
+def test_completion_after_write_offers_widths() -> None:
+    doc = parse_document('main:\n    write \n')
+    assert {item['label'] for item in completions_at(doc, 1, 10)} == {'0', '8', '16', '32'}
+
+
+def test_completion_after_comma_offers_mnemonics() -> None:
+    doc = parse_document('main:\n    set 0 1, \n')
+    labels = {item['label'] for item in completions_at(doc, 1, 13)}
+    assert 'write' in labels
+    assert 'a0' not in labels
+
+
+def test_completion_in_comment_and_after_lut_is_empty() -> None:
+    doc = parse_document('main:\n    # cfg \n    lut \n')
+    assert completions_at(doc, 1, 9) == []
+    assert completions_at(doc, 2, 8) == []

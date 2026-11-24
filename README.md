@@ -74,9 +74,11 @@ binary = bsasm.encode(program)
 
 `source_text` is a BitScrambler assembly program and `chipcfg` describes the available instruction groups for the target hardware. The returned `binary` is the contents of a `.bsbin` file.
 
+Invalid sources raise `bsasm.AssemblerErrors`; its `errors` attribute holds every individual `AssemblerSyntaxError` with its source location — the same full set the CLI and the editor report.
+
 ## Editor support (VS Code)
 
-A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. The editor reports every syntax error it can recover (the CLI stops at the first) and analyzes with the CLI's default `support_all` configuration (it does not take a `-c` chip-capability file).
+A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. Both the CLI and the editor report every error they can recover: the CLI prints each diagnostic on its own line, the editor shows them all at once. The editor analyzes with the CLI's default `support_all` configuration (it does not take a `-c` chip-capability file).
 
 Coloring and diagnostics appear only after the language server starts. If `esp-bsasm[lsp]` is missing from the interpreter in `bsasm.python`, the file stays plain text; the server log is under *Output* → *BitScrambler Assembly Language Server*.
 

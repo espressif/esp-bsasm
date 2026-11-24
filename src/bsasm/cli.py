@@ -10,13 +10,11 @@ from esp_pylib.errors import FatalError
 from esp_pylib.excepthook import install_exception_reporting
 from esp_pylib.logger import log
 
-from bsasm.encoder import encode
-from bsasm.encoder import reformat_lut
-from bsasm.errors import AssemblerError
+from bsasm.encoder import encode, reformat_lut
+from bsasm.errors import AssemblerError, AssemblerErrors
 from bsasm.model import Chipcfg
 from bsasm.parsing import parse
-from bsasm.sema import DEFAULT_CHIPCFG
-from bsasm.sema import analyze
+from bsasm.sema import DEFAULT_CHIPCFG, analyze
 
 
 def read_file(filename: str) -> str:
@@ -71,7 +69,12 @@ def main(infile: str, outfile: str | None, chipcfg_path: str | None) -> None:
         # 'bsasm' - the suffix swap is deterministic instead.
         outfile = str(Path(infile).with_suffix('.bsbin'))
     asm = read_file(infile)
-    program = analyze(parse(asm), chipcfg)
+    parsed = parse(asm)
+    if parsed.errors:
+        raise AssemblerErrors(parsed.errors)
+    program, errors = analyze(parsed.statements, chipcfg)
+    if errors:
+        raise AssemblerErrors(errors)
     write_file(outfile, encode(program))
     words = len(reformat_lut(program.lut, program.meta.lut_width))
     log.print(f'Written {len(program.insts)} instructions and {words} 32-bit words of LUT.')
@@ -88,6 +91,10 @@ def run() -> int:
     install_exception_reporting()
     try:
         main()
+    except AssemblerErrors as e:
+        for error in e.errors:
+            log.print(f'ERROR: {error}')
+        return 2
     except FatalError as e:
         log.die(str(e), exit_code=2)
     return 0
