@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
-"""Decode a .bsbin into the dict shape the sidecar ``.json`` files use.
+"""Decode a .bsbin into a readable dict for test diagnostics.
 
-Field names and unpacking rules match ESP-IDF ``tools/test_bsasm/test_bsasm.py``,
-which is also where the JSON expect files were produced.
+Field names and unpacking rules match ESP-IDF ``tools/test_bsasm/test_bsasm.py``.
+:func:`unpack_binary` is used by ``test_bsasm.py`` to explain a byte-level golden
+mismatch in terms of decoded header fields, instructions and LUT words.
 """
 
 import struct
@@ -133,24 +134,3 @@ def unpack_binary(filename: Path) -> UnpackedBinary:
     unpacked['inst'] = inst
     unpacked['lut'] = list(struct.unpack_from('<' + 'L' * lut_size_words, data, off))
     return unpacked
-
-
-def assert_expected_subset(decoded: object, expected: object, path: str) -> None:
-    """JSON-sidecar comparison: every key in ``expected`` must match ``decoded``.
-
-    Extra keys in ``decoded`` are ignored. Lists are compared over the length
-    of the JSON value, matching IDF's ``TestAssembler.compare``.
-    """
-    assert type(decoded) is type(expected), f' Diverging types between json and decoded obj: {path}'
-    if isinstance(expected, dict):
-        assert isinstance(decoded, dict)
-        for key, value in expected.items():
-            assert key in decoded, f' Key not found in decoded output: {path}.{key}'
-            assert_expected_subset(decoded[key], value, f'{path}.{key}')
-        return
-    if isinstance(expected, list):
-        assert isinstance(decoded, list)
-        for i, value in enumerate(expected):
-            assert_expected_subset(decoded[i], value, f'{path}[{i}]')
-        return
-    assert expected == decoded, f'Items different: {path} (json {expected} decoded {decoded})'
