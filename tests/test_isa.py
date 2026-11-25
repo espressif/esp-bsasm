@@ -28,7 +28,8 @@ def test_modules_share_one_copy_of_each_table() -> None:
     assert sema.LOOP_ENDS_ON_VALUES is isa.LOOP_ENDS_ON_VALUES
     assert sema.LUT_MINMAX is isa.LUT_MINMAX
     assert sema.VALID_WIDTHS is isa.VALID_WIDTHS
-    assert sema.DEFAULT_CHIPCFG is isa.DEFAULT_CHIPCFG
+    assert sema.OPTIONAL_OPCODES is isa.OPTIONAL_OPCODES
+    assert sema.OPTIONAL_INSTRUCTION_GROUPS is isa.OPTIONAL_INSTRUCTION_GROUPS
     assert encoder.OPCODE_BASES is isa.OPCODE_BASES
     assert encoder.DEFAULT_LOW_INPUT == isa.DEFAULT_LOW_INPUT
     assert lsp.CFG_VALUES is isa.CFG_VALUES
@@ -69,6 +70,8 @@ def test_cfg_and_numeric_domains() -> None:
     }
     assert isa.TRAILING_BYTES_MAX == 8191
     assert isa.VALID_WIDTHS == (Width.ZERO, Width.EIGHT, Width.SIXTEEN, Width.THIRTYTWO)
+    assert isa.OPTIONAL_OPCODES == {OpcodeKind.ADDCTI: 'addcti'}
+    assert isa.OPTIONAL_INSTRUCTION_GROUPS == frozenset(isa.OPTIONAL_OPCODES.values())
     assert set(isa.CFG_VALUES) == {
         'prefetch',
         'trailing_bytes',

@@ -48,6 +48,14 @@ def _load_cases() -> list[Case]:
     ]
 
 
+# Extra instructions the corpus programs exercise; the caller (the test
+# harness) enables them explicitly, since nothing is enabled by default
+# (see ``bsasm.isa.OPTIONAL_INSTRUCTION_GROUPS``).
+ENABLED_GROUPS: dict[str, frozenset[str]] = {
+    'opcodes2': frozenset({'addcti'}),
+}
+
+
 def _mismatch_detail(actual: Path, golden: Path) -> str:
     """Byte-level diff plus decoded fields, to locate a regression."""
     got = actual.read_bytes()
@@ -90,7 +98,10 @@ def test_assemble_subprocess(tmp_path: Path) -> None:
 @pytest.mark.parametrize('case', _load_cases(), ids=lambda case: case.name)
 def test_assemble(case: Case, run_bsasm, tmp_path: Path) -> None:
     outfile = tmp_path / f'{case.name}.bsbin'
-    result = run_bsasm([str(case.source), str(outfile)], cwd=tmp_path)
+    enable_args: list[str] = []
+    for group in sorted(ENABLED_GROUPS.get(case.name, frozenset())):
+        enable_args += ['--enable-extra-inst', group]
+    result = run_bsasm([str(case.source), str(outfile), *enable_args], cwd=tmp_path)
     captured = (result.stdout + result.stderr).strip()
     assert result.returncode == 0, (
         f'{case.name} was expected to succeed, assembler exited {result.returncode}\n{captured}'

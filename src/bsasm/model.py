@@ -9,7 +9,6 @@ semantic analysis (:mod:`bsasm.sema`) produces and what the encoder
 
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
-from typing import TypedDict
 
 from bsasm.errors import Location
 
@@ -214,7 +213,7 @@ class LdctiSub:
 
 @dataclass(frozen=True, slots=True)
 class AddctiSub:
-    """'ADDCTIc[H|L]': add the mux output to the counter (chip-gated)."""
+    """'ADDCTIc[H|L]': add the mux output to the counter."""
 
     counter: CounterSel
     halves: Halves
@@ -355,11 +354,3 @@ def check_sources_compatible(first: MuxSource, second: MuxSource) -> str:
     if first.lutsel is not None and second.lutsel is not None and first.lutsel != second.lutsel:
         message = 'With the selected LUT width, the LUT input overlaps the selected counter input'
     return message
-
-
-class Chipcfg(TypedDict, total=False):
-    """Chip capability description, as found in bsasm_targets/*.json."""
-
-    chipname: str
-    extra_instruction_groups: list[str]
-    support_all: bool

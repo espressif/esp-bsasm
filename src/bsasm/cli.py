@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Command line interface of the BitScrambler assembler."""
 
-import json
 from pathlib import Path
 
 import rich_click as click
@@ -13,9 +12,9 @@ from esp_pylib.logger import log
 from bsasm import __version__
 from bsasm.encoder import encode, reformat_lut
 from bsasm.errors import AssemblerError, AssemblerErrors
-from bsasm.model import Chipcfg
+from bsasm.isa import OPTIONAL_INSTRUCTION_GROUPS
 from bsasm.parsing import parse
-from bsasm.sema import DEFAULT_CHIPCFG, analyze
+from bsasm.sema import analyze, normalize_extra_inst
 
 
 def read_file(filename: str) -> str:
@@ -46,24 +45,22 @@ def write_file(filename: str, data: bytes) -> None:
 @click.argument('infile', type=click.Path(exists=True, dir_okay=False))
 @click.argument('outfile', required=False)
 @click.option(
-    '-c',
-    '--chip',
-    'chipcfg_path',
-    type=click.Path(exists=True, dir_okay=False),
-    help=('Set chip capabilities json file; if set, returns an error when an unsupported instruction is assembled'),
+    '--enable-extra-inst',
+    'enabled_extra_inst',
+    multiple=True,
+    metavar='NAME',
+    help=(
+        'Enable extra instructions for this target. Repeat this option, or '
+        'separate several names with commas. Each name is one family '
+        f'(one of: {", ".join(sorted(OPTIONAL_INSTRUCTION_GROUPS))}). '
+        'Names are case-insensitive.'
+    ),
 )
-def main(infile: str, outfile: str | None, chipcfg_path: str | None) -> None:
-    chipcfg: Chipcfg
-    if chipcfg_path is not None:
-        try:
-            with open(chipcfg_path, encoding='utf-8') as chipcfg_json:
-                chipcfg = json.load(chipcfg_json)
-        except OSError as e:
-            raise AssemblerError(f'Error opening {chipcfg_path}: {e}') from e
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise AssemblerError(f'Invalid chip capabilities json {chipcfg_path}: {e}') from e
-    else:
-        chipcfg = DEFAULT_CHIPCFG
+def main(infile: str, outfile: str | None, enabled_extra_inst: tuple[str, ...]) -> None:
+    # One option value may list several families ('addcti,other'); repeating
+    # the option is the same thing. Both forms become one set of names.
+    names = [part.strip() for value in enabled_extra_inst for part in value.split(',') if part.strip()]
+    enabled = normalize_extra_inst(names)
 
     if outfile is None:
         # Default output name: the input path with a '.bsbin' suffix. A
@@ -75,7 +72,7 @@ def main(infile: str, outfile: str | None, chipcfg_path: str | None) -> None:
     parsed = parse(asm)
     if parsed.errors:
         raise AssemblerErrors(parsed.errors)
-    program, errors = analyze(parsed.statements, chipcfg)
+    program, errors = analyze(parsed.statements, enabled)
     if errors:
         raise AssemblerErrors(errors)
     write_file(outfile, encode(program))

@@ -24,7 +24,7 @@ Every consumer imports these objects directly - no copies and no private-name
 aliases. ``tests/test_isa.py`` pins both the values and that single ownership.
 """
 
-from bsasm.model import Chipcfg, LoopEndsOn, LutWidth, OpcodeKind, Width
+from bsasm.model import LoopEndsOn, LutWidth, OpcodeKind, Width
 
 # ---------------------------------------------------------------------------
 # .bsbin binary layout
@@ -105,7 +105,14 @@ TRAILING_BYTES_MAX = 8191
 
 VALID_WIDTHS = (Width.ZERO, Width.EIGHT, Width.SIXTEEN, Width.THIRTYTWO)
 
-DEFAULT_CHIPCFG: Chipcfg = {'chipname': 'chip', 'extra_instruction_groups': [], 'support_all': True}
+# Optional opcodes, keyed by opcode and valued by the name a caller passes to
+# enable that family of mnemonics (CLI: ``--enable-extra-inst``; API:
+# ``enabled_extra_inst``). Several opcodes may share one name. By
+# default nothing is enabled; the caller passes the names its target supports.
+OPTIONAL_OPCODES: dict[OpcodeKind, str] = {
+    OpcodeKind.ADDCTI: 'addcti',
+}
+OPTIONAL_INSTRUCTION_GROUPS: frozenset[str] = frozenset(OPTIONAL_OPCODES.values())
 
 # Candidate value spellings offered by the editor after each cfg key.
 # ``trailing_bytes`` takes an arbitrary integer, so nothing is enumerable.

@@ -4,17 +4,17 @@
 
 This module owns every check that needs a readable diagnostic: numeric
 ranges and spellings, label resolution, the ctrsel/lutsel/rel_addr
-compatibility rules, per-chip instruction gating and the per-bundle
+compatibility rules, extra instructions and the per-bundle
 'unusually many opcodes' checks. The behaviour mirrors the original
 assembler's four passes; the differences are deliberate and documented in
 the repository README.md.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 from bsasm.errors import AssemblerError, AssemblerSyntaxError, Location
 from bsasm.isa import (
-    DEFAULT_CHIPCFG,
     INPUT_LUT_BITS,
     INPUTS,
     INPUTS_CTRSEL_CLR,
@@ -23,6 +23,8 @@ from bsasm.isa import (
     LUT_MINMAX,
     LUT_STARTS,
     LUT_WIDTH_VALUES,
+    OPTIONAL_INSTRUCTION_GROUPS,
+    OPTIONAL_OPCODES,
     PREFETCH_VALUES,
     TRAILING_BYTES_MAX,
     VALID_WIDTHS,
@@ -36,7 +38,6 @@ from bsasm.model import (
     BundleStmt,
     CfgKey,
     CfgStmt,
-    Chipcfg,
     CounterSel,
     EofSide,
     Halves,
@@ -105,18 +106,53 @@ def source_spellings() -> list[SourceSpelling]:
     return items
 
 
-def analyze(statements: list[Statement], chipcfg: Chipcfg | None = None) -> tuple[Program, list[AssemblerError]]:
+def normalize_extra_inst(names: Iterable[str]) -> frozenset[str]:
+    """Return the canonical spelling of ``names``, rejecting unknown ones.
+
+    Each name enables one family of mnemonics (``addcti`` enables the
+    ``ADDCTI*`` instructions). Matching is case-insensitive. A bare string is
+    rejected: the value is a collection of names, and a string would otherwise
+    be read one character at a time. An unknown name raises
+    :class:`AssemblerError`.
+    """
+    if isinstance(names, str):
+        raise AssemblerError('Extra instructions must be a collection of names, not a single string')
+    enabled: set[str] = set()
+    unknown: list[str] = []
+    seen_unknown: set[str] = set()
+    for name in names:
+        if not isinstance(name, str):
+            raise AssemblerError(f'Extra instruction name must be a string, got {type(name).__name__}')
+        canonical = name.lower()
+        if canonical in OPTIONAL_INSTRUCTION_GROUPS:
+            enabled.add(canonical)
+        elif canonical not in seen_unknown:
+            unknown.append(name)
+            seen_unknown.add(canonical)
+    if unknown:
+        unknown.sort(key=str.lower)
+        valid = ', '.join(sorted(OPTIONAL_INSTRUCTION_GROUPS)) or '(none)'
+        raise AssemblerError(f'Unknown extra instructions {", ".join(unknown)}; valid names: {valid}')
+    return frozenset(enabled)
+
+
+def analyze(
+    statements: list[Statement], enabled_extra_inst: Iterable[str] = ()
+) -> tuple[Program, list[AssemblerError]]:
     """Run the five semantic passes, collecting every error.
 
-    The returned :class:`Program` is only safe to encode when ``errors`` is
-    empty.
+    ``enabled_extra_inst`` lists the extra-instruction families that
+    are allowed. Names are matched case-insensitively; an unknown name raises
+    :class:`AssemblerError`. An instruction whose family is absent is reported
+    in ``errors``. The returned :class:`Program` is only safe to encode when
+    ``errors`` is empty.
     """
-    cfg = DEFAULT_CHIPCFG if chipcfg is None else chipcfg
+    enabled = normalize_extra_inst(enabled_extra_inst)
     errors: list[AssemblerError] = []
     labels = _collect_labels(statements, errors)
     meta = _collect_cfg(statements, errors)
     lut = _collect_lut(statements, meta.lut_width, errors)
-    insts = _build_insts(statements, cfg, labels, meta.lut_width, errors)
+    insts = _build_insts(statements, enabled, labels, meta.lut_width, errors)
     # Count bundles, not successfully-built insts: labels are indexed by bundle,
     # so a bundle that failed to build must not shift the instruction count used
     # for the hardware limit and the jump-target bounds.
@@ -405,17 +441,9 @@ def _parse_output_range(start: Atom, end: Atom | None) -> range:
 # Pass 4: instructions --------------------------------------------------------
 
 
-def _check_chip_supports(chipcfg: Chipcfg, group: str, location: Location) -> None:
-    if chipcfg.get('support_all'):
-        return
-    if group not in chipcfg.get('extra_instruction_groups', []):
-        name = chipcfg.get('chipname', 'chip')
-        raise AssemblerSyntaxError(location, f'Chip {name} does not support this instruction')
-
-
 def _build_insts(
     statements: list[Statement],
-    chipcfg: Chipcfg,
+    enabled: frozenset[str],
     labels: dict[str, int],
     lut_width: LutWidth,
     errors: list[AssemblerError],
@@ -425,7 +453,7 @@ def _build_insts(
         if not isinstance(st, BundleStmt):
             continue
         try:
-            insts.append(_build_inst(st, chipcfg, labels, lut_width))
+            insts.append(_build_inst(st, enabled, labels, lut_width))
         except AssemblerError as e:
             errors.append(e)
     return insts
@@ -470,14 +498,16 @@ def _check_jump_targets(
 class _InstBuilder:
     """Accumulates the mux routes, FIFO widths and opcode of one instruction."""
 
-    def __init__(self, st: BundleStmt, labels: dict[str, int], lut_width: LutWidth, chipcfg: Chipcfg) -> None:
+    def __init__(self, st: BundleStmt, labels: dict[str, int], lut_width: LutWidth, enabled: frozenset[str]) -> None:
         self._location = st.location
         self._labels = labels
         self._lut_width = lut_width
-        self._chipcfg = chipcfg
+        self._enabled = enabled
         self._mux: dict[int, MuxSource] = {}
         self._read = Width.ZERO
         self._write = Width.ZERO
+        self._read_at: Location | None = None
+        self._write_at: Location | None = None
         self._op: Opcode | None = None
 
     def build(self) -> Instruction:
@@ -518,7 +548,6 @@ class _InstBuilder:
             case LdctiSub():
                 self._add_counter(OpcodeKind.LDCTI, sub.location, sub.counter, sub.halves)
             case AddctiSub():
-                _check_chip_supports(self._chipcfg, 'addcti', sub.location)
                 self._add_counter(OpcodeKind.ADDCTI, sub.location, sub.counter, sub.halves)
             case JmpSub():
                 # JMP is an IF on the fixed-high input.
@@ -531,6 +560,9 @@ class _InstBuilder:
                 raise AssertionError(f'Unhandled sub-instruction {sub!r}')
 
     def _set_op(self, op: Opcode) -> None:
+        name = OPTIONAL_OPCODES.get(op.kind)
+        if name is not None and name not in self._enabled:
+            raise AssemblerSyntaxError(op.location, f"extra instructions '{name}' are not enabled")
         if self._op is not None:
             raise AssemblerSyntaxError(
                 self._op.location, 'Cannot have multiple opcodes in one instruction', op.location
@@ -553,13 +585,18 @@ class _InstBuilder:
                 i += 1
 
     def _add_width(self, sub: WidthSub) -> None:
+        noun = 'read' if sub.is_read else 'write'
+        previous = self._read_at if sub.is_read else self._write_at
+        if previous is not None:
+            raise AssemblerSyntaxError(previous, f'Cannot have multiple {noun}s in one instruction', sub.location)
         value = _parse_val(sub.width, 0, 32)
         if value not in VALID_WIDTHS:
-            noun = 'read' if sub.is_read else 'write'
             raise AssemblerSyntaxError(sub.location, f'{value} is not a valid amount of bits to {noun}')
         if sub.is_read:
+            self._read_at = sub.location
             self._read = Width(value)
         else:
+            self._write_at = sub.location
             self._write = Width(value)
 
     def _add_loop(self, sub: LoopSub) -> None:
@@ -609,8 +646,8 @@ class _InstBuilder:
         self._set_op(Opcode(kind=kind, location=location, counter=counter, halves=halves, value=value))
 
 
-def _build_inst(st: BundleStmt, chipcfg: Chipcfg, labels: dict[str, int], lut_width: LutWidth) -> Instruction:
-    builder = _InstBuilder(st, labels, lut_width, chipcfg)
+def _build_inst(st: BundleStmt, enabled: frozenset[str], labels: dict[str, int], lut_width: LutWidth) -> Instruction:
+    builder = _InstBuilder(st, labels, lut_width, enabled)
     for sub in st.subs:
         builder.add(sub)
     return builder.build()
