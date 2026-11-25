@@ -78,7 +78,7 @@ include = ["bsasm*"]
 
 [tool.commitizen]
 name = "czespressif"
-version = "0.1.0"
+version = "0.2.0"
 tag_format = "v$version"
 bump_message = "change(bump): Update version to $new_version"
 version_files = [

@@ -2,7 +2,7 @@
   "name": "esp-bsasm",
   "displayName": "ESP BitScrambler Assembly",
   "description": "BitScrambler assembly (.bsasm) language support for ESP-IDF, powered by the esp-bsasm language server.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "espressif",
   "license": "Apache-2.0",
   "engines": {

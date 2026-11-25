@@ -19,7 +19,7 @@ Any source errors are reported together as :class:`AssemblerErrors`, whose
 ``errors`` attribute holds each individual :class:`AssemblerSyntaxError`.
 """
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 
 from collections.abc import Iterable
 
