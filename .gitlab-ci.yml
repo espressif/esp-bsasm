@@ -32,7 +32,9 @@ pre_commit_checks:
     paths: [$CI_PROJECT_DIR/.cache/pre-commit]
   before_script:
     - apt-get update -qq && apt-get install -y -qq git
-    - python -m pip install pre-commit
+    # `pre-commit` runs the hooks; `-e .` puts the repo's own `bsasm` on PATH
+    # for the local bsasm-format hook (language: system).
+    - python -m pip install pre-commit -e .
   script:
     - pre-commit run --all-files --show-diff-on-failure
   rules:
@@ -120,7 +122,7 @@ pytest_coverage:
   extends: .pytest_template
   image: python:3.15-slim
   script:
-    - python -m pytest --junitxml=junit.xml --cov=bsasm --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=80
+    - python -m pytest --junitxml=junit.xml --cov=bsasm --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=90
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     when: always
@@ -137,7 +139,4 @@ pytest_coverage:
 # Publishing to PyPI happens on the GitHub mirror (see
 # .github/workflows/release_pypi.yml): the GitLab EE push mirror (configured
 # in Settings -> Repository -> Mirroring repositories) keeps the mirror in
-# sync with this repository. NOTE: the mirror is set to sync only protected
-# branches - make sure release tags reach GitHub before publishing a release
-# there (use the mirror's "Sync now" button or uncheck the protected-only
-# option).
+# sync with this repository.

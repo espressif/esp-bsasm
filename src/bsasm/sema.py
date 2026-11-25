@@ -20,6 +20,7 @@ from bsasm.isa import (
     INPUTS_CTRSEL_CLR,
     INPUTS_CTRSEL_SET,
     LOOP_ENDS_ON_VALUES,
+    LUT_MAX_VALUES,
     LUT_MINMAX,
     LUT_STARTS,
     LUT_WIDTH_VALUES,
@@ -250,8 +251,14 @@ def _collect_cfg(statements: list[Statement], errors: list[AssemblerError]) -> P
 
 
 def _collect_lut(statements: list[Statement], lut_width: LutWidth, errors: list[AssemblerError]) -> list[int]:
-    """Collect all LUT values, validated against the final LUT width."""
+    """Collect all LUT values, validated against the final LUT width.
+
+    The binary header stores the LUT length as a 16-bit word count, so an
+    oversized table is reported here instead of overflowing struct.pack in
+    the encoder.
+    """
     minimum, maximum = LUT_MINMAX[lut_width]
+    max_values = LUT_MAX_VALUES[lut_width]
     values: list[int] = []
     for st in statements:
         if isinstance(st, LutStmt):
@@ -260,6 +267,14 @@ def _collect_lut(statements: list[Statement], lut_width: LutWidth, errors: list[
                     values.append(_parse_val(atom, minimum, maximum))
                 except AssemblerError as e:
                     errors.append(e)
+    if len(values) > max_values:
+        first_lut = next(st for st in statements if isinstance(st, LutStmt))
+        errors.append(
+            AssemblerSyntaxError(
+                first_lut.location,
+                f'Program has more than {max_values} LUT values for the configured LUT width.',
+            )
+        )
     return values
 
 

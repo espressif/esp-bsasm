@@ -6,8 +6,14 @@
 The generated Python modules are committed under src/bsasm/generated/ so
 that assembling a program never needs a JDK; only the antlr4-python3-runtime
 pip package is required at run time. This script is for grammar development:
-it regenerates the modules with a pinned ANTLR version and can verify in CI
-(--check) that the committed modules are in sync with BitScrambler.g4.
+it regenerates the modules with the ANTLR tool jar vendored in vendor/ and
+can verify in CI (--check) that the committed modules are in sync with
+BitScrambler.g4.
+
+The vendored jar is the only ANTLR tool ever used: it is part of the
+repository, so regeneration is reproducible, works offline, and never
+depends on (or trusts) a download. A missing jar is an error, not a prompt
+to fetch one.
 
 Usage:
     python regenerate.py           # regenerate in place
@@ -18,19 +24,15 @@ import argparse
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
 
 # Keep this in sync with the antlr4-python3-runtime pin in pyproject.toml.
 ANTLR_VERSION = '4.13.2'
-ANTLR_JAR_URL = f'https://www.antlr.org/download/antlr-{ANTLR_VERSION}-complete.jar'
 
 HERE = Path(__file__).resolve().parent
 GRAMMAR = HERE / 'BitScrambler.g4'
 GENERATED = HERE / 'src' / 'bsasm' / 'generated'
-# The exact jar the committed generated sources were produced with. Using
-# it needs no network access; the download fallback below only applies
-# when regenerating with a different ANTLR version.
+# The exact jar the committed generated sources were produced with.
 VENDORED_JAR = HERE / 'vendor' / f'antlr-{ANTLR_VERSION}-complete.jar'
 # Files ANTLR generates from this grammar; anything else in generated/ (the
 # __init__.py) is left alone.
@@ -44,26 +46,19 @@ GENERATED_FILES = [
     'BitScramblerParser.py',
     'BitScramblerVisitor.py',
 ]
-JAR_CACHE = Path.home() / '.cache' / 'bsasm' / f'antlr-{ANTLR_VERSION}-complete.jar'
-
-
-def antlr_jar() -> Path:
-    if VENDORED_JAR.exists():
-        return VENDORED_JAR
-    if JAR_CACHE.exists():
-        return JAR_CACHE
-    JAR_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    print(f'Downloading {ANTLR_JAR_URL} to {JAR_CACHE} ...')
-    urllib.request.urlretrieve(ANTLR_JAR_URL, JAR_CACHE)
-    return JAR_CACHE
 
 
 def generate(dest: Path) -> None:
+    if not VENDORED_JAR.exists():
+        sys.exit(
+            f'{VENDORED_JAR} not found. The ANTLR {ANTLR_VERSION} tool jar is vendored in this\n'
+            'repository and is never downloaded; restore it from version control.'
+        )
     dest.mkdir(parents=True, exist_ok=True)
     cmd = [
         'java',
         '-jar',
-        str(antlr_jar()),
+        str(VENDORED_JAR),
         '-Dlanguage=Python3',
         '-visitor',
         '-listener',
@@ -76,11 +71,15 @@ def generate(dest: Path) -> None:
         GRAMMAR.name,
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=HERE)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=HERE)
     except FileNotFoundError:
         sys.exit('java not found; a JDK (any version supported by ANTLR 4) is needed to regenerate the parser')
     except subprocess.CalledProcessError as e:
         sys.exit(f'ANTLR generation failed:\n{e.stderr}')
+    if result.stderr:
+        # ANTLR warnings (e.g. a new grammar ambiguity) do not fail the
+        # build; show them instead of letting them go unnoticed.
+        sys.stderr.write(result.stderr)
 
 
 def main() -> None:

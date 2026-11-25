@@ -1545,6 +1545,15 @@ class BitScramblerParser ( Parser ):
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
+            self.endVal = None # Token
+            self.ctrAdd = None # Token
+            self.tgt = None # LabelRefContext
+
+        def LOOPA(self):
+            return self.getToken(BitScramblerParser.LOOPA, 0)
+
+        def LOOPB(self):
+            return self.getToken(BitScramblerParser.LOOPB, 0)
 
         def NUMBER(self, i:int=None):
             if i is None:
@@ -1555,12 +1564,6 @@ class BitScramblerParser ( Parser ):
         def labelRef(self):
             return self.getTypedRuleContext(BitScramblerParser.LabelRefContext,0)
 
-
-        def LOOPA(self):
-            return self.getToken(BitScramblerParser.LOOPA, 0)
-
-        def LOOPB(self):
-            return self.getToken(BitScramblerParser.LOOPB, 0)
 
         def getRuleIndex(self):
             return BitScramblerParser.RULE_loopInstr
@@ -1597,11 +1600,11 @@ class BitScramblerParser ( Parser ):
                 self._errHandler.reportMatch(self)
                 self.consume()
             self.state = 175
-            self.match(BitScramblerParser.NUMBER)
+            localctx.endVal = self.match(BitScramblerParser.NUMBER)
             self.state = 176
-            self.match(BitScramblerParser.NUMBER)
+            localctx.ctrAdd = self.match(BitScramblerParser.NUMBER)
             self.state = 177
-            self.labelRef()
+            localctx.tgt = self.labelRef()
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -2259,6 +2262,8 @@ class BitScramblerParser ( Parser ):
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
+            self.first = None # Token
+            self.last = None # Token
 
         def NUMBER(self, i:int=None):
             if i is None:
@@ -2297,7 +2302,7 @@ class BitScramblerParser ( Parser ):
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 206
-            self.match(BitScramblerParser.NUMBER)
+            localctx.first = self.match(BitScramblerParser.NUMBER)
             self.state = 209
             self._errHandler.sync(self)
             _la = self._input.LA(1)
@@ -2305,7 +2310,7 @@ class BitScramblerParser ( Parser ):
                 self.state = 207
                 self.match(BitScramblerParser.RANGE)
                 self.state = 208
-                self.match(BitScramblerParser.NUMBER)
+                localctx.last = self.match(BitScramblerParser.NUMBER)
 
 
         except RecognitionException as re:
@@ -2323,6 +2328,8 @@ class BitScramblerParser ( Parser ):
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
+            self.first = None # SourceBitContext
+            self.last = None # SourceBitContext
 
         def sourceBit(self, i:int=None):
             if i is None:
@@ -2362,7 +2369,7 @@ class BitScramblerParser ( Parser ):
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 211
-            self.sourceBit()
+            localctx.first = self.sourceBit()
             self.state = 214
             self._errHandler.sync(self)
             _la = self._input.LA(1)
@@ -2370,7 +2377,7 @@ class BitScramblerParser ( Parser ):
                 self.state = 212
                 self.match(BitScramblerParser.RANGE)
                 self.state = 213
-                self.sourceBit()
+                localctx.last = self.sourceBit()
 
 
         except RecognitionException as re:

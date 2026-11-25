@@ -33,13 +33,19 @@ classifiers = [
   "Operating System :: Microsoft :: Windows",
   "Operating System :: MacOS :: MacOS X",
 ]
-# The generated parser sources import the antlr4 runtime at run time
-# (`from antlr4 import *`), and a runtime of at least the generating
-# tool's version is required - hence the floor, not a lock.
+# The generated parser sources import the antlr4 runtime at run time and
+# call checkVersion() against the generating tool's version: the runtime
+# accepts only the same major.minor (a mismatch warns, and the ATN may fail
+# to deserialize). Pin the matching feature release and bump it together
+# with ANTLR_VERSION in regenerate.py.
 dependencies = [
-  "antlr4-python3-runtime>=4.13.2",
+  "antlr4-python3-runtime~=4.13.2",
   # The shared logger / errors / excepthook APIs require this floor.
   "esp-pylib>=1.2.1",
+  # Console.print(soft_wrap=...) exists since 6.0 and Syntax(background_color=
+  # ...) predates 12.0, but the FORCE_COLOR env handling documented for
+  # `bsasm format --diff` only landed in 12.6.
+  "rich>=12.6",
   "rich-click",
 ]
 
@@ -52,17 +58,19 @@ test = [
   "pytest-cov>=7",
   # test_lsp.py exercises the language server, so its runtime deps are
   # part of the test environment too.
-  "pygls>=2.1",
+  "pygls>=2.1,<3",
   "lsprotocol",
 ]
 lsp = [
-  "pygls>=2.1",
+  # pygls 2.x was a rewrite of the 1.x API; do not promise compatibility
+  # with a future 3.x sight unseen.
+  "pygls>=2.1,<3",
+  # pygls pins lsprotocol to an exact version, so it needs no constraint here.
   "lsprotocol",
 ]
 
 [project.scripts]
 bsasm = "bsasm.cli:run"
-bsasm-lsp = "bsasm.lsp:main"
 
 [project.urls]
 Repository = "https://github.com/espressif/esp-bsasm"

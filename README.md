@@ -49,7 +49,7 @@ python -c "import bsasm; print(bsasm.__version__)"
 ## Command-line usage
 
 ```console
-bsasm PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
+bsasm compile PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
 ```
 
 If the output path is omitted, the assembler replaces the `.bsasm` suffix with `.bsbin`.
@@ -61,10 +61,31 @@ Keywords and identifiers are case-insensitive: `CFG`, `Cfg` and `cfg` are the sa
 You can also invoke the command through Python:
 
 ```console
-python -m bsasm PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
+python -m bsasm compile PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
 ```
 
 The command exits with status 2 when the source cannot be assembled and reports diagnostics with one-based line and column locations.
+
+The same package also installs a source formatter:
+
+```console
+bsasm format PROGRAM.bsasm                       # update in place
+bsasm format --check PROGRAM.bsasm other.bsasm    # report status only
+bsasm format --diff PROGRAM.bsasm                  # show the patch
+bsasm format --check --diff PROGRAM.bsasm          # both: patch + exit 1
+bsasm format - < PROGRAM.bsasm > out.bsasm         # stdin/stdout filter
+```
+
+With no options, `format` rewrites files in place. The two flags produce a report instead and never write files:
+
+- `--check` reports status on stderr and exits 1 if any file would change.
+- `--diff` prints a unified diff; it combines with `--check` so CI can show the patch and still fail.
+
+The diff is colored when stdout is a terminal and plain when piped or when `NO_COLOR` is set (`FORCE_COLOR=1` overrides detection); long lines are never wrapped. Every input file is processed even when others fail: good files are still reformatted, and each problem is reported with its file name. Syntax-invalid files are left untouched and reported with status 2. Summary and per-file status messages go to stderr.
+
+An input name of `-` means standard input, following the long-standing Unix convention (`cat -`, `grep -`, …). Click only lets that literal through (`click.Path(allow_dash=True)`); bsasm itself reads stdin and writes the formatted result to stdout, which is the natural output of a filter. Use `bsasm format - < in.bsasm > out.bsasm` to format to a different file without touching the original.
+
+Formatting is canonical: labels, `cfg` and `lut` stay at column zero, instructions are indented one level, trailing comments align at column 32, and blank lines are collapsed to at most one. A blank line is added only around bundles that span several physical lines; consecutive one-line bundles keep their original spacing. Original keyword casing, labels, number spellings and comments are preserved. The style can be changed with `--indent-width` (default 4), `--comment-column` (default eight times the indent width) and `--tabs`; the language server uses the editor's `tabSize` and `insertSpaces` settings.
 
 ## Python API
 
@@ -73,6 +94,7 @@ import bsasm
 
 program = bsasm.assemble(source_text, ['addcti'])
 binary = bsasm.encode(program)
+formatted = bsasm.format_source(source_text, bsasm.FormatOptions(indent_width=2))
 ```
 
 `source_text` is a BitScrambler assembly program. The second argument, `enabled_extra_inst`, is a collection of names for the extra instructions the target supports (see `bsasm.isa.OPTIONAL_INSTRUCTION_GROUPS`). Each name enables one family of mnemonics. Names are matched case-insensitively, and the default is an empty collection. An unknown name raises `AssemblerError`. An extra instruction that was not enabled raises `AssemblerErrors`. The returned `binary` is the contents of a `.bsbin` file.
@@ -81,11 +103,11 @@ Invalid sources raise `bsasm.AssemblerErrors`; its `errors` attribute holds ever
 
 ## Editor support (VS Code)
 
-A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. Both the CLI and the editor report every error they can recover: the CLI prints each diagnostic on its own line, the editor shows them all at once. The editor does not know the target chip and treats every instruction as available. The assembler is what rejects extra instructions the target did not enable.
+A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, whole-document formatting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, formatting, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. Both the CLI and the editor report every error they can recover: the CLI prints each diagnostic on its own line, the editor shows them all at once. The editor does not know the target chip and treats every instruction as available. The assembler is what rejects extra instructions the target did not enable.
 
 Coloring and diagnostics appear only after the language server starts. If `esp-bsasm[lsp]` is missing from the interpreter in `bsasm.python`, the file stays plain text; the server log is under *Output* → *BitScrambler Assembly Language Server*.
 
-The server is `python -m bsasm.lsp`, also installed as the `bsasm-lsp` command.
+The server is available through the same entry point as the other commands: `bsasm lsp` or `python -m bsasm lsp`.
 
 To set it up from a source checkout:
 
@@ -104,7 +126,7 @@ To set it up from a source checkout:
    code --install-extension esp-bsasm-<version>.vsix
    ```
 
-3. Point the extension at the interpreter that has the package installed. It launches `python -m bsasm.lsp` with the `bsasm.python` setting (default `python`). In VS Code settings:
+3. Point the extension at the interpreter that has the package installed. It launches `python -m bsasm lsp` with the `bsasm.python` setting (default `python`). In VS Code settings:
 
    ```json
    "bsasm.python": "/path/to/python-with-esp-bsasm"

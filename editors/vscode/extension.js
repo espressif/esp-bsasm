@@ -11,11 +11,11 @@ function getPython() {
   return vscode.workspace.getConfiguration('bsasm').get('python', 'python');
 }
 
-const SERVER_ARGS = ['-m', 'bsasm.lsp'];
+const SERVER_ARGS = ['-m', 'bsasm', 'lsp'];
 
 function ensureServerImport(python) {
   return new Promise((resolve, reject) => {
-    execFile(python, ['-c', 'import bsasm.lsp'], { timeout: 20000 }, (err, _stdout, stderr) => {
+    execFile(python, ['-c', 'import bsasm.cli, bsasm.lsp'], { timeout: 20000 }, (err, _stdout, stderr) => {
       if (!err) {
         resolve();
         return;

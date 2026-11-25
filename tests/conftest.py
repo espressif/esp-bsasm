@@ -37,7 +37,7 @@ def invoke_bsasm(args: list[str], *, cwd: Path) -> BsasmRun:
     old_cwd = Path.cwd()
     try:
         os.chdir(cwd)
-        sys.argv = ['bsasm', *args]
+        sys.argv = ['bsasm', 'compile', *args]
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 runpy.run_module('bsasm', run_name='__main__')
@@ -70,12 +70,15 @@ def _ensure_this_repo_bsasm() -> None:
 
 @pytest.fixture(autouse=True, scope='session')
 def bsasm_terminal_env() -> Iterator[None]:
-    """Keep CLI output stable across TTY and CI (COLUMNS, NO_COLOR)."""
+    """Keep CLI output stable across TTY and CI (COLUMNS, NO_COLOR, TERM)."""
     keys = ('COLUMNS', 'LINES', 'NO_COLOR', 'FORCE_COLOR', 'PY_COLORS', 'TERM')
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['COLUMNS'] = '1000'
     os.environ['LINES'] = '40'
     os.environ['NO_COLOR'] = '1'
+    # A color-capable terminal: TERM=dumb would suppress colors even for
+    # FORCE_COLOR, making the color tests depend on the dev's terminal.
+    os.environ['TERM'] = 'xterm-256color'
     for k in ('FORCE_COLOR', 'PY_COLORS'):
         os.environ.pop(k, None)
     yield

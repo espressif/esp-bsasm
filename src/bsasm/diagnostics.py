@@ -2,13 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Human-readable diagnostic text for lexer and parser errors.
 
-Used by the ANTLR listener in :mod:`bsasm.parsing` and by every consumer of
-its diagnostics (CLI, editor, Python API), so wording cannot diverge. Keeping
-the text helpers here leaves the ANTLR wiring free of diagnostic formatting.
+Used by the ANTLR listener and error strategy in :mod:`bsasm.parsing` and by
+every consumer of its diagnostics (CLI, editor, Python API), so wording
+cannot diverge. The helpers build their text from the recognizer's
+structured state - the offending span and the expected-token set - instead
+of scraping ANTLR's own message strings: the runtime's data is the stable
+interface, its phrasing is not.
 """
 
-# Human-readable spellings for the token names ANTLR mentions in its
-# 'expecting {...}' diagnostics.
+from antlr4 import Parser, Token
+from antlr4.Lexer import Lexer
+
+# Human-readable spellings for the non-literal token types that can appear
+# in an expected-token set. Keyword tokens need no entry: they render
+# through their literal names ('set', 'equal', ...).
 TOKEN_LABELS = {
     'COMMA': "','",
     'NUMBER': 'a number',
@@ -19,40 +26,37 @@ TOKEN_LABELS = {
 }
 
 
-def lexer_offending_text(msg: str) -> str:
-    """The character the lexer choked on, extracted from its message."""
-    # The Python runtime's lexer message looks like
-    # "token recognition error at: '#'" - the quoted part is the character.
-    prefix = 'token recognition error at: '
-    if msg.startswith(prefix):
-        return msg[len(prefix) :].strip('\'"')
-    return msg
+def lexer_offending_text(recognizer: Lexer) -> str:
+    """The character(s) the lexer choked on.
 
-
-def parser_message(msg: str, offending_text: str) -> str:
-    """Rewrite an ANTLR parser message for users.
-
-    ANTLR messages are spelled for grammar developers ('mismatched input
-    'x' expecting {...}'); extract the offending token and, when possible,
-    render the expected set readably.
+    Reconstructed the same way the runtime builds its own 'token recognition
+    error at: ...' message (see ``Lexer.notifyListeners``), so the text
+    stays right even if that wording changes.
     """
-    expected = expected_tokens(msg)
+    text = recognizer._input.getText(recognizer._tokenStartCharIndex, recognizer._input.index)
+    display: str = recognizer.getErrorDisplay(text)
+    return display
+
+
+def parser_message(recognizer: Parser, offending_text: str, *, include_expected: bool) -> str:
+    """A readable parser error: what was found, then what would have fit.
+
+    ``include_expected`` is off where the offending token is not itself the
+    problem (a *missing* token points at what follows the gap), matching the
+    cases ANTLR phrases without 'expecting ...'.
+    """
     message = f'unexpected {offending_text!r}'
-    if expected:
-        message += f', expected {expected}'
+    if include_expected:
+        expected = expected_tokens(recognizer)
+        if expected:
+            message += f', expected {expected}'
     return message
 
 
-def expected_tokens(msg: str) -> str:
-    """Readable rendering of the tokens ANTLR says it was expecting."""
-    if 'expecting' not in msg:
-        return ''
-    tail = msg.rsplit('expecting', 1)[1].strip()
-    if not (tail.startswith('{') and tail.endswith('}')):
-        # A single token name, e.g. "expecting NUMBER".
-        return TOKEN_LABELS.get(tail.strip('"\''), f'`{tail}`')
-    names = [name.strip() for name in tail[1:-1].split(',')]
-    labels = sorted(TOKEN_LABELS.get(name, f'`{name}`') for name in names)
+def expected_tokens(recognizer: Parser) -> str:
+    """Readable rendering of the parser's expected-token set at this point."""
+    interval = recognizer.getExpectedTokens()
+    labels = sorted(_token_label(recognizer, token_type) for token_type in interval)
     if len(labels) > 6:
         # A wide expected set containing NAME is an identifier position: the
         # grammar accepts every keyword as an identifier there, so listing
@@ -63,3 +67,20 @@ def expected_tokens(msg: str) -> str:
     if len(labels) == 1:
         return labels[0]
     return f'one of {", ".join(labels)}'
+
+
+def _token_label(recognizer: Parser, token_type: int) -> str:
+    """How one token type should read inside an expected-token list."""
+    if token_type == Token.EOF:
+        return 'end of file'
+    name = recognizer.symbolicNames[token_type]
+    if name in TOKEN_LABELS:
+        return TOKEN_LABELS[name]
+    # literalNames stops at the last literal token; word-shaped tokens
+    # (NAME, NUMBER, ...) have no entry at all.
+    literal: str | None = recognizer.literalNames[token_type] if token_type < len(recognizer.literalNames) else None
+    if literal is not None:
+        # A keyword: the literal name is the spelling users type ('set',
+        # 'equal'), already single-quoted by the runtime.
+        return literal
+    return f'`{name}`'

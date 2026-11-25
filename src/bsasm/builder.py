@@ -10,7 +10,7 @@ label resolution). All interpretation lives in :mod:`bsasm.sema`.
 
 from dataclasses import dataclass
 
-from antlr4 import ParserRuleContext, TerminalNode
+from antlr4 import ParserRuleContext, TerminalNode, Token
 
 from bsasm.errors import Location
 from bsasm.generated.BitScramblerLexer import BitScramblerLexer
@@ -78,10 +78,21 @@ _MNEMONICS: dict[int, _Mnemonic] = {
 }
 
 
+def _location(token: Token) -> Location:
+    """One-based location of a single lexer token."""
+    return Location(token.line, token.column + 1, token.text)
+
+
 def _token_location(node: ParserRuleContext | TerminalNode) -> Location:
     """Location of a rule context or of a single terminal node."""
-    token = node.getSymbol() if hasattr(node, 'getSymbol') else node.start
-    return Location(token.line, token.column + 1, token.text)
+    return _location(node.start if isinstance(node, ParserRuleContext) else node.getSymbol())
+
+
+def _atom(node: ParserRuleContext | TerminalNode | Token) -> Atom:
+    """An operand atom from a rule context, a terminal node or a labeled token."""
+    if isinstance(node, Token):
+        return Atom(node.text, _location(node))
+    return Atom(node.getText(), _token_location(node))
 
 
 class ProgramBuilder(BitScramblerVisitor):
@@ -106,7 +117,9 @@ class ProgramBuilder(BitScramblerVisitor):
             if isinstance(child, BitScramblerParser.LabelDefContext):
                 name = child.LABEL().getText()[:-1]  # drop the colon
                 statements.append(LabelStmt(name, _token_location(child)))
-            else:
+            elif isinstance(child, ParserRuleContext):
+                # The trailing NEWLINE is a TerminalNode; visiting it would
+                # append None to the IR via the visitor's default result.
                 statements.append(self.visit(child))
         return statements
 
@@ -144,53 +157,51 @@ class ProgramBuilder(BitScramblerVisitor):
 
     def visitSubSet(self, ctx: BitScramblerParser.SubSetContext) -> SetSub:
         inst = ctx.setInstr()
-        out_numbers = inst.outSpec().NUMBER()
-        in_bits = inst.inSpec().sourceBit()
+        out, ins = inst.outSpec(), inst.inSpec()
         return SetSub(
-            out_start=self._atom(out_numbers[0]),
-            out_end=self._atom(out_numbers[1]) if len(out_numbers) > 1 else None,
-            in_start=self._atom(in_bits[0]),
-            in_end=self._atom(in_bits[1]) if len(in_bits) > 1 else None,
+            out_start=_atom(out.first),
+            out_end=_atom(out.last) if out.last is not None else None,
+            in_start=_atom(ins.first),
+            in_end=_atom(ins.last) if ins.last is not None else None,
             location=_token_location(inst),
         )
 
     def visitSubWrite(self, ctx: BitScramblerParser.SubWriteContext) -> WidthSub:
         inst = ctx.writeInstr()
-        return WidthSub(self._atom(inst.NUMBER()), is_read=False, location=_token_location(inst))
+        return WidthSub(_atom(inst.NUMBER()), is_read=False, location=_token_location(inst))
 
     def visitSubRead(self, ctx: BitScramblerParser.SubReadContext) -> WidthSub:
         inst = ctx.readInstr()
-        return WidthSub(self._atom(inst.NUMBER()), is_read=True, location=_token_location(inst))
+        return WidthSub(_atom(inst.NUMBER()), is_read=True, location=_token_location(inst))
 
     def visitSubLoop(self, ctx: BitScramblerParser.SubLoopContext) -> LoopSub:
         inst = ctx.loopInstr()
-        numbers = inst.NUMBER()
         return LoopSub(
             counter=CounterSel.A if inst.LOOPA() else CounterSel.B,
-            end_val=self._atom(numbers[0]),
-            ctr_add=self._atom(numbers[1]),
-            target=self._atom(inst.labelRef().identifier()),
+            end_val=_atom(inst.endVal),
+            ctr_add=_atom(inst.ctrAdd),
+            target=_atom(inst.tgt.identifier()),
             location=_token_location(inst),
         )
 
     def visitSubAdd(self, ctx: BitScramblerParser.SubAddContext) -> AddSub:
         inst = ctx.addInstr()
         mnemonic = _MNEMONICS[inst.addMnemonic().start.type]
-        return AddSub(mnemonic.counter, mnemonic.halves, self._atom(inst.NUMBER()), _token_location(inst))
+        return AddSub(mnemonic.counter, mnemonic.halves, _atom(inst.NUMBER()), _token_location(inst))
 
     def visitSubIf(self, ctx: BitScramblerParser.SubIfContext) -> IfSub:
         inst = ctx.ifInstr()
         return IfSub(
             negated=bool(inst.IFN()),
-            cond=self._atom(inst.condSource().sourceBit()),
-            target=self._atom(inst.labelRef().identifier()),
+            cond=_atom(inst.condSource().sourceBit()),
+            target=_atom(inst.labelRef().identifier()),
             location=_token_location(inst),
         )
 
     def visitSubLdctd(self, ctx: BitScramblerParser.SubLdctdContext) -> LdctdSub:
         inst = ctx.ldctdInstr()
         mnemonic = _MNEMONICS[inst.ldctdMnemonic().start.type]
-        return LdctdSub(mnemonic.counter, mnemonic.halves, self._atom(inst.NUMBER()), _token_location(inst))
+        return LdctdSub(mnemonic.counter, mnemonic.halves, _atom(inst.NUMBER()), _token_location(inst))
 
     def visitSubLdcti(self, ctx: BitScramblerParser.SubLdctiContext) -> LdctiSub:
         inst = ctx.ldctiInstr()
@@ -204,13 +215,7 @@ class ProgramBuilder(BitScramblerVisitor):
 
     def visitSubJmp(self, ctx: BitScramblerParser.SubJmpContext) -> JmpSub:
         inst = ctx.jmpInstr()
-        return JmpSub(self._atom(inst.labelRef().identifier()), _token_location(inst))
+        return JmpSub(_atom(inst.labelRef().identifier()), _token_location(inst))
 
     def visitSubNop(self, ctx: BitScramblerParser.SubNopContext) -> NopSub:
         return NopSub(_token_location(ctx.nopInstr()))
-
-    # Helpers --------------------------------------------------------------
-
-    @staticmethod
-    def _atom(ctx: ParserRuleContext) -> Atom:
-        return Atom(ctx.getText(), _token_location(ctx))

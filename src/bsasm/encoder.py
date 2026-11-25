@@ -155,8 +155,12 @@ def _encode_inst(inst: Instruction) -> bytes:
         if i < COND_MUX_SLOT:
             bits.add_bits(src.index, 7)
 
-    # Opcode field, 26 bits: bit 25 LOOP flag, 24 counter, 23/22 halves,
-    # 21..23 target, 16..20 sub-opcode, 0..15 immediate / 0..6 IF source.
+    # Opcode field, 26 bits, as in the TRM 'Instruction Opcode' table: bit 25
+    # LOOP flag, 24 counter select, 16..20 sub-opcode (OPCODE_BASES), 0..15
+    # immediate / 0..6 IF condition source. Bits 21..23 are shared between two
+    # mutually exclusive uses, exactly as the TRM table shows: the 3-bit jump
+    # target (LOOP/IF/IFN), or the counter write-back halves 23=h, 22=l
+    # (ADD/LDCTD/LDCTI/ADDCTI, which never jump and keep bit 21 clear).
     opcode = OPCODE_BASES[op.kind]
     if op.counter is CounterSel.B:
         opcode |= 1 << 24

@@ -1,8 +1,8 @@
 # ESP BitScrambler Assembly — VS Code extension
 
-Syntax-aware editing for `.bsasm` files (ESP-IDF BitScrambler assembly): live diagnostics straight from the assembler's own parser, semantic highlighting derived from the grammar, document outline (labels), go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Keywords are case-insensitive (`CFG`, `Cfg`, `cfg` all work), and the original spelling is preserved in the editor.
+Syntax-aware editing for `.bsasm` files (ESP-IDF BitScrambler assembly): live diagnostics straight from the assembler's own parser, semantic highlighting derived from the grammar, whole-document formatting, document outline (labels), go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Keywords are case-insensitive (`CFG`, `Cfg`, `cfg` all work), and the original spelling is preserved in the editor.
 
-The extension is a thin client: all language intelligence lives in the `esp-bsasm` Python package, launched over stdio as `python -m bsasm.lsp`.
+The extension is a thin client: all language intelligence lives in the `esp-bsasm` Python package, launched over stdio as `python -m bsasm lsp`.
 
 ## Install
 
@@ -38,7 +38,7 @@ npm run package
 
 ### 3. Point it at the right interpreter
 
-The extension runs `python -m bsasm.lsp` using the interpreter from the `bsasm.python` setting (default: `python` on your `PATH`). If the package lives in a virtualenv — for instance the ESP-IDF Python environment — set the interpreter explicitly:
+The extension runs `python -m bsasm lsp` using the interpreter from the `bsasm.python` setting (default: `python` on your `PATH`). If the package lives in a virtualenv — for instance the ESP-IDF Python environment — set the interpreter explicitly:
 
 ```jsonc
 // .vscode/settings.json
@@ -51,4 +51,4 @@ This also matters when VS Code is launched from a desktop launcher that does not
 
 ## Verify
 
-Open a `.bsasm` file: a syntax error below an instruction shows a red squiggle with the assembler's own message. Highlighting and diagnostics require the language server; if it fails to start, the buffer stays plain text. The server log is under *Output* → *BitScrambler Assembly Language Server*.
+Open a `.bsasm` file: a syntax error below an instruction shows a red squiggle with the assembler's own message. Run *Format Document* from the Command Palette (`Ctrl+Shift+P` → "Format Document"), or use its keybinding if you have one configured, for canonical formatting. You can also enable `editor.formatOnSave` for `.bsasm`. Syntax-invalid documents are deliberately left unchanged. Highlighting, formatting and diagnostics require the language server; if it fails to start, the buffer stays plain text. The server log is under *Output* → *BitScrambler Assembly Language Server*.
