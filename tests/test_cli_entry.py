@@ -7,7 +7,6 @@ Default output naming is a suffix swap, not a global '.bsasm' string replace.
 """
 
 import io
-import json
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -81,18 +80,6 @@ def test_undecodable_input_reports_clean_error(run_bsasm, tmp_path: Path) -> Non
     assert 'Error decoding' in combined
 
 
-def test_undecodable_chipcfg_reports_clean_error(run_bsasm, tmp_path: Path) -> None:
-    good = tmp_path / 'ok.bsasm'
-    good.write_text('main:\n    write 8\n', encoding='utf-8')
-    cfg = tmp_path / 'cfg.json'
-    cfg.write_bytes(b'\xff\xfe{}')
-    run = run_bsasm([str(good), '-c', str(cfg)], cwd=tmp_path)
-    combined = run.stdout + run.stderr
-    assert run.returncode == 2
-    assert 'Traceback' not in combined
-    assert 'Invalid chip capabilities' in combined
-
-
 def test_default_outfile_keeps_directory_names(run_bsasm, tmp_path: Path) -> None:
     src_dir = tmp_path / 'bsasm.dir'
     src_dir.mkdir()
@@ -112,18 +99,29 @@ def test_default_outfile_replaces_only_the_final_suffix(run_bsasm, tmp_path: Pat
     assert (tmp_path / 'xbsasm.bsbin').exists()
 
 
-def test_unsupported_instruction_reports_clean_error(run_bsasm, tmp_path: Path) -> None:
-    # A well-formed chip capability file that lacks the instruction: the
-    # CLI must reject it with exit 2 and no traceback.
+def test_optional_instruction_rejected_unless_enabled(run_bsasm, tmp_path: Path) -> None:
     good = tmp_path / 'ok.bsasm'
     good.write_text('main:\n    addctia\n', encoding='utf-8')
-    chip = tmp_path / 'esp32p4.json'
-    chip.write_text(
-        json.dumps({'chipname': 'esp32p4', 'extra_instruction_groups': [], 'support_all': False}),
-        encoding='utf-8',
-    )
-    run = run_bsasm([str(good), '-c', str(chip)], cwd=tmp_path)
+
+    run = run_bsasm([str(good)], cwd=tmp_path)
     combined = run.stdout + run.stderr
     assert run.returncode == 2
     assert 'Traceback' not in combined
-    assert 'does not support this instruction' in combined
+    assert "extra instructions 'addcti' are not enabled" in combined
+    assert 'frozenset' not in combined
+    assert '--enable' not in combined
+
+    run = run_bsasm([str(good), '--enable-extra-inst', 'ADDCTI, addcti'], cwd=tmp_path)
+    assert run.returncode == 0
+
+
+def test_unknown_enable_group_is_rejected(run_bsasm, tmp_path: Path) -> None:
+    good = tmp_path / 'ok.bsasm'
+    good.write_text('main:\n    write 8\n', encoding='utf-8')
+    run = run_bsasm([str(good), '--enable-extra-inst', 'addcti,addctia'], cwd=tmp_path)
+    combined = run.stdout + run.stderr
+    assert run.returncode == 2
+    assert 'Traceback' not in combined
+    assert 'Unknown extra instructions' in combined
+    assert 'addctia' in combined
+    assert 'addcti,addctia' not in combined

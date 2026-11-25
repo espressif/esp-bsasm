@@ -75,6 +75,12 @@ def test_valid_program_has_no_diagnostics() -> None:
     assert parse_document(PROGRAM).diagnostics == []
 
 
+def test_editor_accepts_every_instruction() -> None:
+    # The editor does not know the target chip, so extra instructions are not
+    # an error here. The assembler rejects them unless the caller enables them.
+    assert parse_document('addctia\n').diagnostics == []
+
+
 def test_undefined_jump_target_is_reported() -> None:
     doc = parse_document('main:\n    jmp nowhere\n')
     assert len(doc.diagnostics) == 1
@@ -162,6 +168,16 @@ def test_keyword_hover_has_documentation() -> None:
     text = hover(PROGRAM, 3, 5)  # loopa
     assert text is not None
     assert 'repeat the instruction bundle' in text
+
+
+def test_hover_keeps_text_wrapped_across_lines() -> None:
+    # A following string literal is not part of the assignment unless the
+    # whole value is parenthesized. ADDCTIBH's second sentence must survive.
+    text = hover('addctibh\n', 0, 0)
+    assert text is not None
+    assert 'counter b' in text
+    assert 'upper/lower half' in text
+    assert 'bare form writes both halves' in text
 
 
 def test_hover_covers_cfg_keys() -> None:

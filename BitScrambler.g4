@@ -8,7 +8,7 @@
 // predicates so the same spec can later drive ANTLR targets for other
 // languages. Everything that needs a readable diagnostic instead of a
 // generic parse error - numeric ranges, label resolution, ctrsel/lutsel/
-// rel_addr conflicts, per-chip instruction support - is checked by the
+// rel_addr conflicts, extra instructions - is checked by the
 // assembler (src/bsasm/sema.py); see the repository README.md for the full
 // picture and for the 'how to add an instruction' walkthrough.
 //

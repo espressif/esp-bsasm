@@ -6,8 +6,14 @@ Typical use, mirroring what the CLI does::
 
     import bsasm
 
-    program = bsasm.assemble(source_text, chipcfg)
+    program = bsasm.assemble(source_text)
     binary = bsasm.encode(program)
+
+Extra instructions are off by default. Pass the names the target supports
+as ``enabled_extra_inst`` (the CLI:
+``bsasm --enable-extra-inst addcti,other ...``). One name enables a
+family of mnemonics; ``addcti`` enables ``ADDCTIA``, ``ADDCTIB`` and their
+``H``/``L`` forms.
 
 Any source errors are reported together as :class:`AssemblerErrors`, whose
 ``errors`` attribute holds each individual :class:`AssemblerSyntaxError`.
@@ -15,14 +21,15 @@ Any source errors are reported together as :class:`AssemblerErrors`, whose
 
 __version__ = '0.1.0'
 
+from collections.abc import Iterable
+
 from bsasm.encoder import encode
 from bsasm.errors import AssemblerError, AssemblerErrors, AssemblerSyntaxError, Location
-from bsasm.model import Chipcfg, Instruction, Program, ProgramMeta
+from bsasm.model import Instruction, Program, ProgramMeta
 from bsasm.parsing import parse
-from bsasm.sema import DEFAULT_CHIPCFG, analyze
+from bsasm.sema import analyze, normalize_extra_inst
 
 __all__ = [
-    'DEFAULT_CHIPCFG',
     'AssemblerError',
     'AssemblerErrors',
     'AssemblerSyntaxError',
@@ -36,18 +43,25 @@ __all__ = [
 ]
 
 
-def assemble(source: str, chipcfg: Chipcfg | None = None) -> Program:
+def assemble(source: str, enabled_extra_inst: Iterable[str] = ()) -> Program:
     """Parse and analyze bsasm ``source`` into a :class:`Program`.
+
+    ``enabled_extra_inst`` lists the extra instructions the target
+    supports. Each name enables one family (``OPTIONAL_INSTRUCTION_GROUPS``
+    in :mod:`bsasm.isa`; ``addcti`` enables the ``ADDCTI*`` mnemonics). Names
+    are matched case-insensitively, and the default enables nothing. An
+    unknown name raises :class:`AssemblerError`. Using an instruction whose
+    family is not listed raises :class:`AssemblerErrors`.
 
     Raises :class:`AssemblerErrors` for any problem in the source; its
     ``errors`` attribute holds every individual diagnostic. This is the same
-    analysis the CLI and the language server use, so all three report the
-    same set of problems.
+    analysis the CLI uses.
     """
+    enabled = normalize_extra_inst(enabled_extra_inst)
     parsed = parse(source)
     if parsed.errors:
         raise AssemblerErrors(parsed.errors)
-    program, errors = analyze(parsed.statements, chipcfg)
+    program, errors = analyze(parsed.statements, enabled)
     if errors:
         raise AssemblerErrors(errors)
     return program

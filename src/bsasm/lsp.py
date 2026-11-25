@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Language server for bsasm (LSP over stdio).
 
-Reuses the very same grammar and parser as the assembler, so everything the
-editor shows - diagnostics, semantic highlighting, symbol outline, jump
-targets - is by construction consistent with what ``python -m bsasm``
-produces. Run with ``python -m bsasm.lsp`` or the ``bsasm-lsp`` console
-script. The VS Code extension in ``editors/vscode/`` launches this module.
+Reuses the same grammar, parser and semantic analysis as the assembler.
+The editor does not know the target chip, so it allows every instruction;
+the assembler rejects extra instructions the caller did not enable. Run with
+``python -m bsasm.lsp`` or the ``bsasm-lsp`` console script. The VS Code
+extension in ``editors/vscode/`` launches this module.
 
 Requires the ``lsp`` extra: ``pip install esp-bsasm[lsp]``.
 """
@@ -18,7 +18,7 @@ from pygls.lsp.server import LanguageServer
 
 from bsasm.errors import AssemblerError, AssemblerSyntaxError, Location
 from bsasm.generated.BitScramblerLexer import BitScramblerLexer
-from bsasm.isa import CFG_VALUES, VALID_WIDTHS
+from bsasm.isa import CFG_VALUES, OPTIONAL_INSTRUCTION_GROUPS, VALID_WIDTHS
 from bsasm.model import COND_MUX_SLOT, BundleStmt, IfSub, JmpSub, LabelStmt, LoopSub, LutWidth, Statement
 from bsasm.parsing import parse
 from bsasm.sema import analyze, source_spellings
@@ -64,8 +64,10 @@ def parse_document(source: str) -> ParsedDocument:
     diagnostics = [_semantic_diagnostic(error) for error in parsed.errors]
     lut_width = None
     if not diagnostics:
-        # Syntax is clean: the same analysis the CLI and assemble() run.
-        program, semantic_errors = analyze(parsed.statements)
+        # Syntax is clean. The editor has no target chip, so every extra
+        # instruction is allowed; the assembler checks what the target
+        # actually supports.
+        program, semantic_errors = analyze(parsed.statements, OPTIONAL_INSTRUCTION_GROUPS)
         diagnostics.extend(_semantic_diagnostic(e) for e in semantic_errors)
         if not semantic_errors:
             lut_width = program.meta.lut_width
@@ -229,11 +231,15 @@ for _t in (BitScramblerLexer.LOOPA, BitScramblerLexer.LOOPB):
         'End condition: ``cfg loop_ends_on``.'
     )
 for _t in (BitScramblerLexer.ADDA, BitScramblerLexer.ADDAH, BitScramblerLexer.ADDAL):
-    _HOVER_DOCS[_t] = '``ADDc <value>`` — add the value to counter a; ``H``/``L`` variants touch '
-    'only the upper/lower half, the bare form updates both halves.'
+    _HOVER_DOCS[_t] = (
+        '``ADDc <value>`` — add the value to counter a; ``H``/``L`` variants touch '
+        'only the upper/lower half, the bare form updates both halves.'
+    )
 for _t in (BitScramblerLexer.ADDB, BitScramblerLexer.ADDBH, BitScramblerLexer.ADDBL):
-    _HOVER_DOCS[_t] = '``ADDc <value>`` — add the value to counter b; ``H``/``L`` variants touch '
-    'only the upper/lower half, the bare form updates both halves.'
+    _HOVER_DOCS[_t] = (
+        '``ADDc <value>`` — add the value to counter b; ``H``/``L`` variants touch '
+        'only the upper/lower half, the bare form updates both halves.'
+    )
 for _t in (
     BitScramblerLexer.LDCTDA,
     BitScramblerLexer.LDCTDAH,
@@ -242,17 +248,25 @@ for _t in (
     BitScramblerLexer.LDCTDBH,
     BitScramblerLexer.LDCTDBL,
 ):
-    _HOVER_DOCS[_t] = '``LDCTDc <value>`` — load counter c with the immediate value; ``H``/``L`` '
-    'variants write only the upper/lower half.'
+    _HOVER_DOCS[_t] = (
+        '``LDCTDc <value>`` — load counter c with the immediate value; ``H``/``L`` '
+        'variants write only the upper/lower half, the bare form writes both halves.'
+    )
 for _t in (BitScramblerLexer.LDCTIA, BitScramblerLexer.LDCTIAH, BitScramblerLexer.LDCTIAL):
-    _HOVER_DOCS[_t] = '``LDCTIc`` — load counter c from the mux output selected in this '
-    'instruction; ``H``/``L`` variants write only the upper/lower half.'
+    _HOVER_DOCS[_t] = (
+        '``LDCTIc`` — load counter c from the mux output selected in this '
+        'instruction; ``H``/``L`` variants write only the upper/lower half, the bare form writes both halves.'
+    )
 for _t in (BitScramblerLexer.ADDCTIA, BitScramblerLexer.ADDCTIAH, BitScramblerLexer.ADDCTIAL):
-    _HOVER_DOCS[_t] = '``ADDCTIc`` — add the mux output of this instruction to counter a; not '
-    'available on every chip (the build with the chip cfg decides).'
+    _HOVER_DOCS[_t] = (
+        '``ADDCTIc`` — add the mux output of this instruction to counter a; '
+        '``H``/``L`` variants write only the upper/lower half, the bare form writes both halves.'
+    )
 for _t in (BitScramblerLexer.ADDCTIB, BitScramblerLexer.ADDCTIBH, BitScramblerLexer.ADDCTIBL):
-    _HOVER_DOCS[_t] = '``ADDCTIc`` — add the mux output of this instruction to counter b; not '
-    'available on every chip (the build with the chip cfg decides).'
+    _HOVER_DOCS[_t] = (
+        '``ADDCTIc`` — add the mux output of this instruction to counter b; '
+        '``H``/``L`` variants write only the upper/lower half, the bare form writes both halves.'
+    )
 
 
 def hover(source: str, line: int, character: int) -> str | None:

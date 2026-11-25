@@ -220,3 +220,32 @@ def test_multiple_opcodes_in_one_bundle_is_reported() -> None:
     # Width subs (write/read) are not opcodes: 'write 8, adda 1' is fine.
     bsasm.encode(bsasm.assemble('write 8, adda 1\n'))
     assert 'Cannot have multiple opcodes' in _error_text('adda 1, addb 2')
+
+
+def test_duplicate_read_or_write_is_reported() -> None:
+    # One read and one write in the same bundle is the normal case.
+    bsasm.encode(bsasm.assemble('read 8, write 16\n'))
+    assert 'Cannot have multiple writes' in _error_text('write 8, write 16')
+    assert 'Cannot have multiple reads' in _error_text('read 8, read 16')
+    # An explicit zero still counts, so a second write is a duplicate.
+    assert 'Cannot have multiple writes' in _error_text('write 0, write 0')
+    messages = [d.message for d in parse_document('write 8, write 16\n').diagnostics]
+    assert messages == ['Cannot have multiple writes in one instruction']
+
+
+def test_optional_instruction_group_is_off_by_default() -> None:
+    message = _error_text('addctia\n')
+    assert "extra instructions 'addcti' are not enabled" in message
+    assert 'frozenset' not in message
+    assert '--enable' not in message
+    # Group names are data, matched case-insensitively, not keywords.
+    bsasm.encode(bsasm.assemble('addctia\n', ['ADDCTI']))
+
+
+def test_unknown_instruction_group_is_rejected() -> None:
+    with pytest.raises(AssemblerError, match='Unknown extra instructions') as ctx:
+        bsasm.assemble('write 8\n', ['addctia'])
+    assert type(ctx.value) is AssemblerError
+
+    with pytest.raises(AssemblerError, match='collection of names'):
+        bsasm.assemble('addctia\n', 'addcti')

@@ -49,19 +49,19 @@ python -c "import bsasm; print(bsasm.__version__)"
 ## Command-line usage
 
 ```console
-bsasm PROGRAM.bsasm [OUTPUT.bsbin] [-c CHIP.json]
+bsasm PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
 ```
 
 If the output path is omitted, the assembler replaces the `.bsasm` suffix with `.bsbin`.
 
-The optional chip capability file allows the assembler to reject instructions that are not supported by a particular BitScrambler implementation. It can be spelled `-c` or `--chip`.
+Extra instructions are off by default. Pass the names the target supports with `--enable-extra-inst`. Several names go in one option, separated by commas (`--enable-extra-inst addcti,other`); repeating the option means the same thing. One name enables a family of mnemonics: `addcti` enables `ADDCTIA`, `ADDCTIB` and their `H`/`L` forms. Names are matched case-insensitively. An unknown name is rejected with the list of valid names, and an extra instruction that was not enabled is an error.
 
 Keywords and identifiers are case-insensitive: `CFG`, `Cfg` and `cfg` are the same keyword. The original spelling is kept in token text for diagnostics and editor features, so labels and messages never lose their casing.
 
 You can also invoke the command through Python:
 
 ```console
-python -m bsasm PROGRAM.bsasm [OUTPUT.bsbin] [-c CHIP.json]
+python -m bsasm PROGRAM.bsasm [OUTPUT.bsbin] [--enable-extra-inst NAME[,NAME...]]
 ```
 
 The command exits with status 2 when the source cannot be assembled and reports diagnostics with one-based line and column locations.
@@ -71,17 +71,17 @@ The command exits with status 2 when the source cannot be assembled and reports 
 ```python
 import bsasm
 
-program = bsasm.assemble(source_text, chipcfg)
+program = bsasm.assemble(source_text, ['addcti'])
 binary = bsasm.encode(program)
 ```
 
-`source_text` is a BitScrambler assembly program and `chipcfg` describes the available instruction groups for the target hardware. The returned `binary` is the contents of a `.bsbin` file.
+`source_text` is a BitScrambler assembly program. The second argument, `enabled_extra_inst`, is a collection of names for the extra instructions the target supports (see `bsasm.isa.OPTIONAL_INSTRUCTION_GROUPS`). Each name enables one family of mnemonics. Names are matched case-insensitively, and the default is an empty collection. An unknown name raises `AssemblerError`. An extra instruction that was not enabled raises `AssemblerErrors`. The returned `binary` is the contents of a `.bsbin` file.
 
-Invalid sources raise `bsasm.AssemblerErrors`; its `errors` attribute holds every individual `AssemblerSyntaxError` with its source location — the same full set the CLI and the editor report.
+Invalid sources raise `bsasm.AssemblerErrors`; its `errors` attribute holds every individual `AssemblerSyntaxError` with its source location — the same full set the CLI reports.
 
 ## Editor support (VS Code)
 
-A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. Both the CLI and the editor report every error they can recover: the CLI prints each diagnostic on its own line, the editor shows them all at once. The editor analyzes with the CLI's default `support_all` configuration (it does not take a `-c` chip-capability file).
+A VS Code extension in [`editors/vscode/`](editors/vscode/) provides live diagnostics, semantic highlighting, a document outline of labels, go-to-definition and find-references on jump targets, and completion for mnemonics, source bits and cfg keys. Diagnostics, highlighting and navigation all come from this package's parser and analyzer - the same code `bsasm` uses - so they cannot drift from the assembler. Both the CLI and the editor report every error they can recover: the CLI prints each diagnostic on its own line, the editor shows them all at once. The editor does not know the target chip and treats every instruction as available. The assembler is what rejects extra instructions the target did not enable.
 
 Coloring and diagnostics appear only after the language server starts. If `esp-bsasm[lsp]` is missing from the interpreter in `bsasm.python`, the file stays plain text; the server log is under *Output* → *BitScrambler Assembly Language Server*.
 
@@ -163,7 +163,7 @@ After changing `BitScrambler.g4`, run `python regenerate.py`, commit the generat
 2. Regenerate the parser with `python regenerate.py` and commit the generated files.
 3. Add the corresponding statement dataclass to `src/bsasm/model.py`.
 4. Add a `visitSub*` method to `src/bsasm/builder.py`; for A/B/H/L variants, update the mnemonic-to-counter-and-halves mapping.
-5. Handle the new statement in `src/bsasm/sema.py`, including chip capability checks where applicable.
+5. Handle the new statement in `src/bsasm/sema.py`. If the opcode is an extra instruction, register its name in `OPTIONAL_OPCODES` in `src/bsasm/isa.py`.
 6. Update `src/bsasm/encoder.py` only when the instruction introduces a genuinely new hardware opcode pattern; the existing opcode base table already covers the standard opcode families.
 7. Add or update tests under `tests/`. When the instruction affects the binary corpus, add a `.bsasm` source and regenerate its golden `.bsbin` with `python tests/make_golden.py /path/to/esp-idf/tools/bsasm.py`.
 8. Update `src/bsasm/lsp.py`: add the mnemonic to `_MNEMONIC_TOKENS` (highlighting and completion derive from that list) and `_HOVER_DOCS`.
