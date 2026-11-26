@@ -123,6 +123,56 @@ def test_comment_only_indentation_has_three_canonical_levels() -> None:
     assert format_source(source) == expected
 
 
+def test_format_source_indents_comments_that_introduce_instructions() -> None:
+    source = (
+        'cfg trailing_bytes 32\n'
+        '\n'
+        '# WS2812 symbol definition in RMT data format\n'
+        'lut 0x80030009   # Zero\n'
+        '\n'
+        '# Output the WS2812 reset symbol first\n'
+        '# The reset code is saved in LUT index 2 (0b10)\n'
+        'set 17 H, set 16 L\n'
+        'set 31..0 L31..L0, write 32\n'
+        '\n'
+        'byteLoop:\n'
+        '    nop\n'
+    )
+    expected = (
+        'cfg trailing_bytes 32\n'
+        '\n'
+        '# WS2812 symbol definition in RMT data format\n'
+        'lut 0x80030009                  # Zero\n'
+        '\n'
+        '    # Output the WS2812 reset symbol first\n'
+        '    # The reset code is saved in LUT index 2 (0b10)\n'
+        '    set 17 H, set 16 L\n'
+        '    set 31..0 L31..L0, write 32\n'
+        '\n'
+        'byteLoop:\n'
+        '    nop\n'
+    )
+    assert format_source(source) == expected
+    assert format_source(expected) == expected
+
+
+def test_format_source_keeps_column_zero_comments_before_meta_statements_and_labels() -> None:
+    source = (
+        '# header\n'
+        '\n'
+        'cfg trailing_bytes 0\n'
+        '\n'
+        '# before label\n'
+        'byteLoop:\n'
+        '    nop\n'
+    )  # fmt: skip
+    assert format_source(source) == source
+
+
+def test_comment_leading_an_instruction_uses_configured_indent() -> None:
+    assert format_source('# note\nwrite 8\n', FormatOptions(indent_width=2)) == '  # note\n  write 8\n'
+
+
 def test_formatter_is_safe_on_syntax_errors() -> None:
     with pytest.raises(AssemblerErrors):
         format_source('set 0 1,\n')

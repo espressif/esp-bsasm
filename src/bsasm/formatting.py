@@ -148,16 +148,60 @@ def _statement_spans(
     return spans
 
 
-def _render_line(line: _Line, options: FormatOptions, is_continuation: bool) -> str:
+def _stays_at_column_zero(statement: Statement | None) -> bool:
+    """Whether a statement belongs to the top-level layout class."""
+    return isinstance(statement, (CfgStmt, LutStmt, LabelStmt))
+
+
+def _indented_comment_leaders(lines: list[_Line], spans: list[tuple[int, int]]) -> set[int]:
+    """Column-zero comment blocks that head an indented instruction block.
+
+    A column-zero comment is top-level text only when it heads a label,
+    ``cfg`` or ``lut``, or sits inside a comma continuation; it then keeps
+    that column. If the next statement is an instruction, the comment
+    describes that block and follows its indent. Blank lines inside the
+    block do not break the association.
+    """
+    in_continuation = {index for start, end in spans for index in range(start, end + 1)}
+    leaders: set[int] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.is_comment_only or line.comment_column != 0 or index in in_continuation:
+            index += 1
+            continue
+        block: list[int] = []
+        cursor = index
+        while cursor < len(lines) and (lines[cursor].is_blank or lines[cursor].is_comment_only):
+            current = lines[cursor]
+            if current.is_comment_only:
+                if current.comment_column != 0 or cursor in in_continuation:
+                    break
+                block.append(cursor)
+            cursor += 1
+        if cursor < len(lines):
+            following = lines[cursor].statement
+            if following is not None and not _stays_at_column_zero(following):
+                leaders.update(block)
+        index = cursor
+    return leaders
+
+
+def _render_line(line: _Line, options: FormatOptions, is_continuation: bool, is_leader: bool = False) -> str:
     if line.is_comment_only:
-        indent = ' ' * options.align_column if is_continuation else ('' if line.comment_column == 0 else options.indent)
+        if is_continuation:
+            indent = ' ' * options.align_column
+        elif line.comment_column != 0 or is_leader:
+            indent = options.indent
+        else:
+            indent = ''
         return indent + (line.comment or '')
 
     # The statement that STARTS the line decides the layout class: labels and
     # meta statements live at column zero even when an instruction shares the
     # line ('main: set 0 1'); a line led by an instruction is instruction-block
     # text, even when a label trails it ('set 0 1 done:').
-    if isinstance(line.statement, (CfgStmt, LutStmt, LabelStmt)):
+    if _stays_at_column_zero(line.statement):
         indent = ''
     else:
         indent = options.indent
@@ -177,12 +221,14 @@ def format_source(source: str, options: FormatOptions | None = None) -> str:
     whitespace formatting because the language structure is still known.
 
     The style is fixed per :class:`FormatOptions`: labels, ``cfg`` and ``lut``
-    at column zero, instructions indented one level, one space between
-    ordinary tokens, no space around ``..``, one space after a comma, and
-    trailing comments aligned to a configurable column. A blank line is
-    forced only around bundles that span several physical lines; otherwise
-    the author's blank lines are kept but collapsed to at most one. Files end
-    in one newline, and empty input stays empty.
+    at column zero, instructions indented one level, and a comment block that
+    introduces an instruction indented with it; comments heading a label,
+    ``cfg`` or ``lut`` stay at column zero, as do notes inside a multi-line
+    bundle. One space separates ordinary tokens, none surrounds ``..``, one
+    follows a comma, and trailing comments align to a configurable column.
+    A blank line is forced only around bundles that span several physical
+    lines; otherwise the author's blank lines are kept but collapsed to at
+    most one. Files end in one newline, and empty input stays empty.
     """
     options = options if options is not None else FormatOptions()
     parsed = parse(source)
@@ -226,7 +272,10 @@ def format_source(source: str, options: FormatOptions | None = None) -> str:
     for index, line in enumerate(lines):
         if line.comment is not None and line.code:
             continuations.update(range(index + 1, _comment_continuation_end(index, lines, options) + 1))
-    rendered = [_render_line(line, options, index in continuations) for index, line in enumerate(lines)]
+    leaders = _indented_comment_leaders(lines, spans)
+    rendered = [
+        _render_line(line, options, index in continuations, index in leaders) for index, line in enumerate(lines)
+    ]
 
     output: list[str] = []
     index = 0
