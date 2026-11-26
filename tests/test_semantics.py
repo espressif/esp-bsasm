@@ -17,6 +17,7 @@ from bsasm.lsp import parse_document
 
 TESTCASES_DIR = Path(__file__).resolve().parent / 'testcases'
 
+
 CASE_VARIANT_PROGRAMS = [
     'CFG PREFETCH TRUE\nCFG LUT_WIDTH_BITS 8\nmain:\n    SET 0 O0, WRITE 8\n',
     'Cfg Prefetch True\nCfg Lut_Width_Bits 8\nMaIn:\n    Set 0 o0, WrItE 8\n',
@@ -94,6 +95,10 @@ def test_mux_conflict_fails_at_assemble_time(run_bsasm, tmp_path: Path) -> None:
     combined = run.stdout + run.stderr
     assert 'Traceback' not in combined
     assert 'Cannot have both counters/LUT' in combined
+
+
+def test_relative_and_non_relative_sources_conflict() -> None:
+    assert 'Cannot have these inputs as both relative and not-relative' in _error_text('set 0 0+a, set 1 0')
 
 
 def test_too_many_instructions_is_a_clean_cli_error(run_bsasm, tmp_path: Path) -> None:
@@ -196,6 +201,18 @@ def test_lut_input_out_of_configured_width() -> None:
     assert 'LUT is configured to be only 16 bits wide' in _error_text('cfg lut_width_bits 16\nset 0 l20')
     # The default 32-bit LUT admits l20.
     bsasm.encode(bsasm.assemble('set 0 l20\n'))
+
+
+def test_oversized_lut_is_a_clean_error() -> None:
+    # The header's LUT length is a 16-bit word count; exceeding it used to
+    # escape as a raw struct.error from the encoder.
+    source = 'cfg lut_width_bits 32\nlut ' + ','.join(['0'] * 65536) + '\n'
+    assert 'more than 65535 LUT values' in _error_text(source)
+
+
+def test_parsed_statements_contain_only_real_statements() -> None:
+    parsed = bsasm.parse('main:\nwrite 8\ncfg prefetch true\n')
+    assert all(statement is not None for statement in parsed.statements)
 
 
 def test_invalid_input_name_is_reported() -> None:

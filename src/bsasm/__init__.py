@@ -11,7 +11,7 @@ Typical use, mirroring what the CLI does::
 
 Extra instructions are off by default. Pass the names the target supports
 as ``enabled_extra_inst`` (the CLI:
-``bsasm --enable-extra-inst addcti,other ...``). One name enables a
+``bsasm compile --enable-extra-inst addcti,other ...``). One name enables a
 family of mnemonics; ``addcti`` enables ``ADDCTIA``, ``ADDCTIB`` and their
 ``H``/``L`` forms.
 
@@ -25,6 +25,7 @@ from collections.abc import Iterable
 
 from bsasm.encoder import encode
 from bsasm.errors import AssemblerError, AssemblerErrors, AssemblerSyntaxError, Location
+from bsasm.formatting import FormatOptions, format_source
 from bsasm.model import Instruction, Program, ProgramMeta
 from bsasm.parsing import parse
 from bsasm.sema import analyze, normalize_extra_inst
@@ -33,12 +34,15 @@ __all__ = [
     'AssemblerError',
     'AssemblerErrors',
     'AssemblerSyntaxError',
+    'FormatOptions',
     'Instruction',
     'Location',
     'Program',
     'ProgramMeta',
     'analyze',
+    'assemble',
     'encode',
+    'format_source',
     'parse',
 ]
 

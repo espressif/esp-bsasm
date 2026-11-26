@@ -98,6 +98,15 @@ LUT_MINMAX = {
     LutWidth.BITS32: (-2147483648, 4294967295),
 }
 
+# The header stores the LUT length as an unsigned 16-bit *word* count, and a
+# word holds 4/2/1 values at 8/16/32-bit widths. More values than this would
+# overflow struct.pack instead of producing a clean diagnostic.
+LUT_MAX_VALUES = {
+    LutWidth.BITS8: 4 * 0xFFFF,
+    LutWidth.BITS16: 2 * 0xFFFF,
+    LutWidth.BITS32: 0xFFFF,
+}
+
 # 'trailing_bytes' is stored in the header as trailing *bits* in a 16-bit
 # field, so 8191 bytes (65528 bits) is the largest value that fits. (The
 # original accepted 8192 and crashed inside struct.pack.)

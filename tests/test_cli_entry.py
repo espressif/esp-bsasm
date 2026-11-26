@@ -11,8 +11,11 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import pytest
+
 from bsasm import __version__
-from bsasm.cli import run
+from bsasm.cli import read_text_file, run
+from bsasm.errors import AssemblerError
 
 
 def invoke_run(argv: list[str]) -> tuple[int | None, str, str]:
@@ -43,19 +46,89 @@ def test_version_option_reports_package_version() -> None:
 def test_console_entry_reports_tool_errors_with_exit_2(tmp_path) -> None:
     bad = tmp_path / 'bad.bsasm'
     bad.write_text('bogus_op\n', encoding='utf-8')
-    code, out, err = invoke_run(['bsasm', str(bad)])
+    code, out, err = invoke_run(['bsasm', 'compile', str(bad)])
     assert code == 2
     combined = out + err
     assert 'Traceback' not in combined
     assert 'line 1' in combined  # the assembler's own diagnostic
 
 
-def test_console_entry_success_exits_zero(tmp_path) -> None:
+def test_unified_compile_subcommand(tmp_path) -> None:
     good = tmp_path / 'ok.bsasm'
     good.write_text('main:\n    write 8\n', encoding='utf-8')
-    code, out, _ = invoke_run(['bsasm', str(good)])
+    code, out, err = invoke_run(['bsasm', 'compile', str(good)])
     assert code == 0
     assert 'Written' in out
+    assert err == ''
+
+
+def test_format_errors_use_the_process_boundary(tmp_path) -> None:
+    source = tmp_path / 'invalid.bsasm'
+    original = 'set 0 1,\n'
+    source.write_text(original, encoding='utf-8')
+
+    code, out, err = invoke_run(['bsasm', 'format', str(source)])
+
+    assert code == 2
+    assert 'line 2' in out + err
+    assert source.read_text(encoding='utf-8') == original
+
+
+def test_format_syntax_error_from_stdin_uses_process_boundary(monkeypatch) -> None:
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('set 0 1,\n'))
+
+    code, out, err = invoke_run(['bsasm', 'format', '-'])
+
+    assert code == 2
+    assert 'line 2' in out + err
+
+
+def test_format_processes_remaining_files_after_a_failure(tmp_path: Path) -> None:
+    good = tmp_path / 'good.bsasm'
+    good.write_text('write\t8\n', encoding='utf-8')
+    bad = tmp_path / 'bad.bsasm'
+    bad.write_text('set 0 1 @\n', encoding='utf-8')
+
+    code, out, err = invoke_run(['bsasm', 'format', str(good), str(bad)])
+
+    assert code == 2
+    combined = out + err
+    assert str(bad) in combined  # the failing file is named with its diagnostics
+    assert good.read_text(encoding='utf-8') == '    write 8\n'  # still reformatted
+
+
+def test_format_check_reports_every_failing_file(tmp_path: Path) -> None:
+    bad1 = tmp_path / 'bad1.bsasm'
+    bad2 = tmp_path / 'bad2.bsasm'
+    bad1.write_text('set 0 1 @\n', encoding='utf-8')
+    bad2.write_text('write 8 %\n', encoding='utf-8')
+
+    code, out, err = invoke_run(['bsasm', 'format', '--check', str(bad1), str(bad2)])
+
+    assert code == 2
+    combined = out + err
+    assert str(bad1) in combined and str(bad2) in combined
+
+
+def test_format_check_with_failures_exits_2_not_1(tmp_path: Path) -> None:
+    changed = tmp_path / 'changed.bsasm'
+    changed.write_text('write\t8\n', encoding='utf-8')
+    bad = tmp_path / 'bad.bsasm'
+    bad.write_text('set 0 1 @\n', encoding='utf-8')
+
+    code, out, err = invoke_run(['bsasm', 'format', '--check', str(changed), str(bad)])
+
+    assert code == 2  # a hard error, not the --check "would change" status
+    assert 'Would reformat' in out + err
+
+
+def test_compile_without_subcommand_is_rejected(tmp_path) -> None:
+    good = tmp_path / 'ok.bsasm'
+    good.write_text('main:\n    write 8\n', encoding='utf-8')
+    code, out, err = invoke_run(['bsasm', str(good)])
+    assert code != 0
+    assert 'No such command' in err
+    assert out == ''
 
 
 def test_unwritable_output_reports_clean_error(run_bsasm, tmp_path: Path) -> None:
@@ -68,6 +141,33 @@ def test_unwritable_output_reports_clean_error(run_bsasm, tmp_path: Path) -> Non
     assert run.returncode == 2
     assert 'Traceback' not in combined
     assert 'Error writing' in combined
+
+
+def test_unwritable_directory_makes_format_fail_cleanly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / 'prog.bsasm'
+    original = 'write\t8\n'
+    source.write_text(original, encoding='utf-8')
+
+    # chmod-based setup is unreliable when CI runs as root; force the same
+    # filesystem failure at the atomic-write boundary instead.
+    def deny_temporary_file(*args: object, **kwargs: object) -> None:
+        raise PermissionError('read-only directory')
+
+    monkeypatch.setattr('bsasm.cli.tempfile.mkstemp', deny_temporary_file)
+    code, out, err = invoke_run(['bsasm', 'format', str(source)])
+
+    assert code == 2
+    combined = out + err
+    assert 'Traceback' not in combined
+    assert 'Error writing' in combined
+    assert source.read_text(encoding='utf-8') == original
+
+
+def test_read_text_file_translates_os_errors(tmp_path: Path) -> None:
+    # click.Path rejects directories and unreadable files before the CLI
+    # helper runs, so exercise the helper's OSError branch directly.
+    with pytest.raises(AssemblerError, match='Error opening'):
+        read_text_file(str(tmp_path))
 
 
 def test_undecodable_input_reports_clean_error(run_bsasm, tmp_path: Path) -> None:

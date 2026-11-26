@@ -4,9 +4,9 @@
 #through when the counter equals or is greater than the end value (the
 #hardware default), or only when the counter is exactly equal.
 
-cfg loop_ends_on equal       #LOOP falls through when counter == end_val
+cfg loop_ends_on equal          #LOOP falls through when counter == end_val
 
 loop_test:
-	ldctda 7                 #count down from 7
-	loopb 2 -1 loop_test     #with equal, counting down reaches end_val exactly
-	jmp loop_test
+    ldctda 7                    #count down from 7
+    loopb 2 -1 loop_test        #with equal, counting down reaches end_val exactly
+    jmp loop_test

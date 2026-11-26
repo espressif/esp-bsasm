@@ -200,7 +200,10 @@ subInstr : setInstr      # SubSet
 setInstr    : SET outSpec inSpec ;
 writeInstr  : WRITE NUMBER ;   // width: semantically restricted to 0/8/16/32
 readInstr   : READ NUMBER ;    // width: semantically restricted to 0/8/16/32
-loopInstr   : (LOOPA | LOOPB) NUMBER NUMBER labelRef ;  // end_val, ctr_add, tgt
+// Operand positions are named with element labels so visitors read
+// (endVal, ctrAdd, tgt) instead of indexing a NUMBER() list; 'start'/'end'
+// are avoided as label names because ParserRuleContext reserves them.
+loopInstr   : (LOOPA | LOOPB) endVal=NUMBER ctrAdd=NUMBER tgt=labelRef ;
 addInstr    : addMnemonic NUMBER ;
 ifInstr     : (IF | IFN) condSource labelRef ;
 ldctdInstr  : ldctdMnemonic NUMBER ;
@@ -216,12 +219,12 @@ addctiMnemonic : ADDCTIA | ADDCTIAH | ADDCTIAL | ADDCTIB | ADDCTIBH | ADDCTIBL ;
 
 // Output selection: an output bit number, optionally as a range
 // ('0', '0..15', backwards '7..0'). 0..31 bounds checked semantically.
-outSpec : NUMBER (RANGE NUMBER)? ;
+outSpec : first=NUMBER (RANGE last=NUMBER)? ;
 
 // Input selection: one source bit or a range of them. Ranges may mix names
 // and numbers ('l0..l31', 'o0..15') and run backwards; which combinations
 // are meaningful is checked semantically.
-inSpec : sourceBit (RANGE sourceBit)? ;
+inSpec : first=sourceBit (RANGE last=sourceBit)? ;
 
 // Condition source for IF/IFN: a single source bit, no range.
 condSource : sourceBit ;

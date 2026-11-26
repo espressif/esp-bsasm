@@ -358,9 +358,13 @@ class _FakeLanguageServer:
     def __init__(self, source: str) -> None:
         self.workspace = _FakeWorkspace(source)
         self.published: list[types.PublishDiagnosticsParams] = []
+        self.logs: list[str] = []
 
     def text_document_publish_diagnostics(self, params: types.PublishDiagnosticsParams) -> None:
         self.published.append(params)
+
+    def window_log_message(self, params: types.LogMessageParams) -> None:
+        self.logs.append(params.message)
 
 
 def test_did_open_publishes_diagnostics() -> None:
@@ -513,6 +517,69 @@ def test_on_references_returns_definition_and_usages() -> None:
         ),
     )
     assert [(loc.range.start.line, loc.range.start.character) for loc in result] == [(1, 0), (3, 14)]
+
+
+def test_document_formatting_replaces_the_whole_source() -> None:
+    result = lsp.document_formatting(
+        _FakeLanguageServer('main:\nwrite\t8'),
+        types.DocumentFormattingParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            options=types.FormattingOptions(tab_size=4, insert_spaces=True),
+        ),
+    )
+    assert len(result) == 1
+    assert result[0].new_text == 'main:\n    write 8\n'
+    assert result[0].range.start == types.Position(line=0, character=0)
+    assert result[0].range.end == types.Position(line=1, character=7)
+
+
+def test_document_formatting_range_uses_lsp_utf16_columns() -> None:
+    source = '    # 🙂\n'
+    result = lsp.document_formatting(
+        _FakeLanguageServer(source + '\r\n'),
+        types.DocumentFormattingParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            options=types.FormattingOptions(tab_size=4, insert_spaces=True),
+        ),
+    )
+    assert len(result) == 1
+    assert result[0].range.end == types.Position(line=2, character=0)
+
+
+def test_document_formatting_leaves_invalid_syntax_untouched() -> None:
+    server = _FakeLanguageServer('set 0 1,\n')
+    result = lsp.document_formatting(
+        server,
+        types.DocumentFormattingParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            options=types.FormattingOptions(tab_size=4, insert_spaces=True),
+        ),
+    )
+    assert result == []
+    assert any('syntax errors' in message for message in server.logs)
+
+
+def test_document_formatting_returns_no_edits_for_canonical_source() -> None:
+    result = lsp.document_formatting(
+        _FakeLanguageServer('main:\n    write 8\n'),
+        types.DocumentFormattingParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            options=types.FormattingOptions(tab_size=4, insert_spaces=True),
+        ),
+    )
+    assert result == []
+
+
+def test_document_formatting_honors_lsp_options() -> None:
+    result = lsp.document_formatting(
+        _FakeLanguageServer('main:\nwrite 8'),
+        types.DocumentFormattingParams(
+            text_document=types.TextDocumentIdentifier(uri='u'),
+            options=types.FormattingOptions(tab_size=2, insert_spaces=False),
+        ),
+    )
+    assert len(result) == 1
+    assert result[0].new_text == 'main:\n\twrite 8\n'
 
 
 def test_completion_handler_returns_items() -> None:

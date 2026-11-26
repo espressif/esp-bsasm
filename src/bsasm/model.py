@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Typed intermediate representation shared by the semantic and encoding layers.
 
-The IR is deliberately small and immutable: :class:`Program` is what the
+The IR is deliberately small and immutable: every dataclass is frozen, and
+the mapping fields are stored as read-only views so "constructed once, never
+mutated" is enforced rather than conventional. :class:`Program` is what the
 semantic analysis (:mod:`bsasm.sema`) produces and what the encoder
 (:mod:`bsasm.encoder`) consumes, so every stage can be tested in isolation.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
+from types import MappingProxyType
+from typing import Any
 
 from bsasm.errors import Location
 
@@ -297,7 +302,12 @@ COND_MUX_SLOT = 32
 MAX_INSTS = 8
 
 
-def mux_with_condition(mux: dict[int, MuxSource], op: Opcode | None) -> dict[int, MuxSource]:
+def _readonly(mapping: Mapping[Any, Any]) -> Mapping[Any, Any]:
+    """A snapshot of ``mapping`` that cannot be mutated through the IR."""
+    return MappingProxyType(dict(mapping))
+
+
+def mux_with_condition(mux: Mapping[int, MuxSource], op: Opcode | None) -> dict[int, MuxSource]:
     """Output-bit routing plus the IF/IFN condition at :data:`COND_MUX_SLOT`."""
     routed = dict(mux)
     if op is not None and op.cond_source is not None:
@@ -311,11 +321,14 @@ class Instruction:
 
     location: Location
     # Output-bit routing, keyed 0..31. The IF/IFN condition is
-    # Opcode.cond_source, not an extra key in this dict.
-    mux: dict[int, MuxSource] = field(default_factory=dict)
+    # Opcode.cond_source, not an extra key in this mapping.
+    mux: Mapping[int, MuxSource] = field(default_factory=dict)
     read: Width = Width.ZERO
     write: Width = Width.ZERO
     op: Opcode | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'mux', _readonly(self.mux))
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,17 +349,20 @@ class Program:
     meta: ProgramMeta
     insts: tuple[Instruction, ...]
     lut: tuple[int, ...]
-    labels: dict[str, int] = field(default_factory=dict)  # lower-cased name -> instruction index
+    labels: Mapping[str, int] = field(default_factory=dict)  # lower-cased name -> instruction index
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'labels', _readonly(self.labels))
 
 
-def check_sources_compatible(first: MuxSource, second: MuxSource) -> str:
+def check_sources_compatible(first: MuxSource, second: MuxSource) -> str | None:
     """Return an error message if two sources of one instruction conflict.
 
     The three checks run in a fixed order and the last conflict wins, which
-    reproduces the diagnostics of the original assembler. An empty string
-    means the sources can coexist in one instruction.
+    reproduces the diagnostics of the original assembler. ``None`` means the
+    sources can coexist in one instruction.
     """
-    message = ''
+    message = None
     if first.rel_addr is not None and second.rel_addr is not None and first.rel_addr != second.rel_addr:
         message = 'Cannot have these inputs as both relative and not-relative in the same instruction'
     if first.ctrsel is not None and second.ctrsel is not None and first.ctrsel != second.ctrsel:

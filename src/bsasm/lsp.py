@@ -5,8 +5,8 @@
 Reuses the same grammar, parser and semantic analysis as the assembler.
 The editor does not know the target chip, so it allows every instruction;
 the assembler rejects extra instructions the caller did not enable. Run with
-``python -m bsasm.lsp`` or the ``bsasm-lsp`` console script. The VS Code
-extension in ``editors/vscode/`` launches this module.
+``python -m bsasm lsp``. The VS Code extension in ``editors/vscode/`` launches
+this subcommand.
 
 Requires the ``lsp`` extra: ``pip install esp-bsasm[lsp]``.
 """
@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from bsasm.errors import AssemblerError, AssemblerSyntaxError, Location
+from bsasm import __version__
+from bsasm.errors import AssemblerError, AssemblerErrors, AssemblerSyntaxError, Location
+from bsasm.formatting import FormatOptions, format_source
 from bsasm.generated.BitScramblerLexer import BitScramblerLexer
 from bsasm.isa import CFG_VALUES, OPTIONAL_INSTRUCTION_GROUPS, VALID_WIDTHS
 from bsasm.model import COND_MUX_SLOT, BundleStmt, IfSub, JmpSub, LabelStmt, LoopSub, LutWidth, Statement
@@ -537,7 +539,7 @@ def completions_at(doc: ParsedDocument, line: int, character: int) -> list[dict]
 # are unit-tested directly; these handlers are thin LSP adapters.
 # ---------------------------------------------------------------------------
 
-server = LanguageServer(name='bsasm-language-server', version='0.1.0')
+server = LanguageServer(name='bsasm-language-server', version=__version__)
 
 _DIAGNOSTIC_SOURCE = 'bsasm'
 
@@ -714,9 +716,43 @@ def completion(ls: LanguageServer, params: types.CompletionParams) -> types.Comp
     )
 
 
-def main() -> None:
+@server.feature(types.TEXT_DOCUMENT_FORMATTING)
+def document_formatting(ls: LanguageServer, params: types.DocumentFormattingParams) -> list[types.TextEdit]:
+    """Format the complete document, or leave invalid syntax untouched."""
+    document = ls.workspace.get_text_document(params.text_document.uri)
+    options = FormatOptions(
+        indent_width=params.options.tab_size,
+        use_tabs=not params.options.insert_spaces,
+    )
+    try:
+        formatted = format_source(document.source, options)
+    except AssemblerErrors:
+        ls.window_log_message(
+            types.LogMessageParams(
+                type=types.MessageType.Log,
+                message='bsasm: formatting skipped because the document has syntax errors',
+            )
+        )
+        return []
+    if formatted == document.source:
+        return []
+
+    lines = document.source.split('\n')
+    final_line = lines[-1]
+    if final_line.endswith('\r'):
+        final_line = final_line[:-1]
+    utf16_end = len(final_line.encode('utf-16-le')) // 2
+    return [
+        types.TextEdit(
+            range=types.Range(
+                start=types.Position(line=0, character=0),
+                end=types.Position(line=len(lines) - 1, character=utf16_end),
+            ),
+            new_text=formatted,
+        )
+    ]
+
+
+def run_stdio_server() -> None:
+    """Run the language server using the standard-I/O transport."""
     server.start_io()
-
-
-if __name__ == '__main__':
-    main()

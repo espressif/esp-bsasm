@@ -82,7 +82,7 @@ def test_assemble_subprocess(tmp_path: Path) -> None:
     env = os.environ.copy()
     env['PYTHONPATH'] = os.pathsep.join([str(SRC_DIR), env.get('PYTHONPATH', '')]).rstrip(os.pathsep)
     result = subprocess.run(
-        [sys.executable, '-m', 'bsasm', str(TESTCASES_DIR / 'sanity.bsasm'), str(outfile)],
+        [sys.executable, '-m', 'bsasm', 'compile', str(TESTCASES_DIR / 'sanity.bsasm'), str(outfile)],
         cwd=tmp_path,
         env=env,
         capture_output=True,

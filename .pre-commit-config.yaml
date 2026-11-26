@@ -44,3 +44,13 @@ repos:
     hooks:
       - id: conventional-precommit-linter
         stages: [commit-msg]
+
+  # Run the repo's own formatter (requires `pip install -e .`). Pinned
+  # managed envs would freeze a snapshot of the formatter instead.
+  - repo: local
+    hooks:
+      - id: bsasm-format
+        name: bsasm format
+        entry: bsasm format --check --diff
+        language: system
+        files: \.bsasm$

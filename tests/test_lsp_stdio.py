@@ -3,7 +3,7 @@
 """Drive the language server over stdio exactly like an editor would.
 
 tests/test_lsp.py exercises the pure helpers; this module exercises the
-pygls handlers themselves through a real ``python -m bsasm.lsp`` process,
+pygls handlers themselves through a real ``python -m bsasm lsp`` process,
 so protocol-level mistakes (wrong params types, misframed replies) fail
 here instead of only in an editor.
 """
@@ -19,6 +19,8 @@ from typing import IO
 
 import pytest
 
+from bsasm.formatting import format_source
+
 REPO = Path(__file__).resolve().parent.parent
 TESTCASE = Path(__file__).resolve().parent / 'testcases' / 'eof_on_downstream.bsasm'
 URI = TESTCASE.as_uri()
@@ -30,7 +32,8 @@ class Server:
 
     def __init__(self) -> None:
         self.process = subprocess.Popen(
-            [sys.executable, '-m', 'bsasm.lsp'],
+            # vscode-languageclient appends --stdio for stdio transport.
+            [sys.executable, '-m', 'bsasm', 'lsp', '--stdio'],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -130,6 +133,7 @@ def test_stdio_server_round_trip(server: Server) -> None:
     result = server.request(1, 'initialize', {'processId': None, 'rootUri': None, 'capabilities': {}})
     capabilities = result['capabilities']
     assert capabilities['semanticTokensProvider']['full']
+    assert capabilities['documentFormattingProvider'] is True
     assert ' ' in capabilities['completionProvider']['triggerCharacters']
     server.notify('initialized', {})
 
@@ -173,8 +177,11 @@ def test_stdio_server_round_trip(server: Server) -> None:
     tokens = server.request(2, 'textDocument/semanticTokens/full', {'textDocument': {'uri': URI}})
     assert tokens['data']
 
+    # Find the key from the document rather than hardcoding a line: the
+    # corpus files are canonical-formatted and may not start with a blank.
+    cfg_line = next(index for index, text in enumerate(good.splitlines()) if 'eof_on' in text)
     hover = server.request(
-        5, 'textDocument/hover', {'textDocument': {'uri': URI}, 'position': {'line': 1, 'character': 5}}
+        5, 'textDocument/hover', {'textDocument': {'uri': URI}, 'position': {'line': cfg_line, 'character': 5}}
     )
     assert hover is not None
     assert 'eof_on' in hover['contents']['value']
@@ -187,7 +194,7 @@ def test_stdio_server_round_trip(server: Server) -> None:
 
     # Context-aware: after 'cfg ' only cfg keys, never instruction mnemonics.
     cfg_completion = server.request(
-        6, 'textDocument/completion', {'textDocument': {'uri': URI}, 'position': {'line': 1, 'character': 4}}
+        6, 'textDocument/completion', {'textDocument': {'uri': URI}, 'position': {'line': cfg_line, 'character': 4}}
     )
     cfg_items = cfg_completion['items'] if isinstance(cfg_completion, dict) else cfg_completion
     cfg_labels = {item['label'] for item in cfg_items}
@@ -198,12 +205,31 @@ def test_stdio_server_round_trip(server: Server) -> None:
     symbols = server.request(4, 'textDocument/documentSymbol', {'textDocument': {'uri': URI}})
     assert isinstance(symbols, list)
 
+    # Deliberately unformatted buffer so the server has something to fix,
+    # independent of how the corpus file on disk is formatted.
+    unformatted_source = 'main:\nwrite\t8\n'
+    server.notify(
+        'textDocument/didChange',
+        {'textDocument': {'uri': URI, 'version': 5}, 'contentChanges': [{'text': unformatted_source}]},
+    )
+    formatting = server.request(
+        8,
+        'textDocument/formatting',
+        {
+            'textDocument': {'uri': URI},
+            'options': {'tabSize': 4, 'insertSpaces': True},
+        },
+    )
+    assert len(formatting) == 1
+    assert formatting[0]['newText'] == format_source(unformatted_source)
+    assert formatting[0]['range']['start'] == {'line': 0, 'character': 0}
+
     # Jump-target navigation over the wire. Switch to a document with a label
     # and a jump to it, then resolve the usage and list all references.
     nav_source = 'main:\n    loopa 2 1 main\n'
     server.notify(
         'textDocument/didChange',
-        {'textDocument': {'uri': URI, 'version': 5}, 'contentChanges': [{'text': nav_source}]},
+        {'textDocument': {'uri': URI, 'version': 6}, 'contentChanges': [{'text': nav_source}]},
     )
     server.wait_diagnostics()
 
